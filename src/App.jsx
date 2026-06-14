@@ -1908,14 +1908,14 @@ export default function HortiCheckApp() {
 
   if (!loaded) {
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex items-center justify-center">
+      <div className="min-h-screen bg-[#F1EFE8] font-sans flex items-center justify-center">
         <p className="text-sm text-slate-400">Loading...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans md:max-w-md md:mx-auto md:border md:border-slate-200 md:my-4 md:rounded-2xl md:overflow-hidden">
+    <div className="min-h-screen bg-[#F1EFE8] font-sans md:max-w-md md:mx-auto md:border md:border-slate-200 md:my-4 md:rounded-2xl md:overflow-hidden">
       {view.screen === 'dashboard' && (
         <Dashboard
           records={records}
