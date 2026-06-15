@@ -259,95 +259,36 @@ function zoneProgress(zone) {
   return done;
 }
 
-// Reads the EXIF orientation tag (1-8) from a JPEG ArrayBuffer.
-// Returns 1 (normal) if no EXIF orientation is found or the file isn't a JPEG.
-function getExifOrientation(arrayBuffer) {
-  const view = new DataView(arrayBuffer);
-  if (view.getUint16(0, false) !== 0xffd8) return 1; // not a JPEG
-  const length = view.byteLength;
-  let offset = 2;
-  while (offset < length) {
-    const marker = view.getUint16(offset, false);
-    offset += 2;
-    if (marker === 0xffe1) {
-      // APP1 marker — likely contains EXIF data
-      const exifLength = view.getUint16(offset, false);
-      if (view.getUint32(offset + 2, false) !== 0x45786966) return 1; // "Exif"
-      const tiffOffset = offset + 8;
-      const little = view.getUint16(tiffOffset, false) === 0x4949;
-      const firstIFDOffset = view.getUint32(tiffOffset + 4, little);
-      const dirStart = tiffOffset + firstIFDOffset;
-      const entries = view.getUint16(dirStart, little);
-      for (let i = 0; i < entries; i++) {
-        const entryOffset = dirStart + 2 + i * 12;
-        const tag = view.getUint16(entryOffset, little);
-        if (tag === 0x0112) {
-          return view.getUint16(entryOffset + 8, little);
-        }
-      }
-      return 1;
-    } else if ((marker & 0xff00) !== 0xff00) {
-      break;
-    } else {
-      offset += view.getUint16(offset, false);
-    }
-  }
-  return 1;
-}
-
-// Reads an image file, corrects for EXIF orientation by redrawing it onto a
-// canvas in the correct upright orientation, and returns a JPEG data URL.
-// This ensures the stored image is "physically" correct so it displays
-// consistently in <img> tags, annotation canvases, and PDF exports.
+// Reads an image file and re-encodes it via canvas as a JPEG data URL.
+//
+// Modern browsers already decode <img>/createImageBitmap with EXIF
+// orientation applied automatically — img.width/height and the pixels drawn
+// via ctx.drawImage() are already "upright". Re-encoding through canvas
+// simply strips the EXIF block, which avoids jsPDF (which does NOT honour
+// EXIF orientation when embedding images) re-applying a rotation that the
+// browser has already accounted for.
 function readFileAsImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const arrayBuffer = reader.result;
-      const orientation = getExifOrientation(arrayBuffer);
-      const blob = new Blob([arrayBuffer], { type: file.type });
-      const url = URL.createObjectURL(blob);
       const img = new Image();
       img.onload = () => {
-        const { width: srcW, height: srcH } = img;
-        let canvasW = srcW;
-        let canvasH = srcH;
-        if (orientation >= 5 && orientation <= 8) {
-          canvasW = srcH;
-          canvasH = srcW;
-        }
         const canvas = document.createElement('canvas');
-        canvas.width = canvasW;
-        canvas.height = canvasH;
+        canvas.width = img.width;
+        canvas.height = img.height;
         const ctx = canvas.getContext('2d');
-
-        switch (orientation) {
-          case 2: ctx.transform(-1, 0, 0, 1, srcW, 0); break;
-          case 3: ctx.transform(-1, 0, 0, -1, srcW, srcH); break;
-          case 4: ctx.transform(1, 0, 0, -1, 0, srcH); break;
-          case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
-          case 6: ctx.transform(0, 1, -1, 0, srcH, 0); break;
-          case 7: ctx.transform(0, -1, -1, 0, srcH, srcW); break;
-          case 8: ctx.transform(0, -1, 1, 0, 0, srcW); break;
-          default: break; // 1: no transform needed
-        }
-
         ctx.drawImage(img, 0, 0);
-        URL.revokeObjectURL(url);
         resolve({
           src: canvas.toDataURL('image/jpeg', 0.9),
-          width: canvasW,
-          height: canvasH,
+          width: img.width,
+          height: img.height,
         });
       };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error('Failed to load image'));
-      };
-      img.src = url;
+      img.onerror = reject;
+      img.src = reader.result;
     };
     reader.onerror = reject;
-    reader.readAsArrayBuffer(file);
+    reader.readAsDataURL(file);
   });
 }
 
