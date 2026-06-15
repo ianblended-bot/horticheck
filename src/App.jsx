@@ -251,6 +251,44 @@ function generateOverallSummary(zones, siteName) {
   return text;
 }
 
+// Per-category short action phrases, used to build auto-generated action points.
+const ACTION_PHRASES = {
+  plantHealth: 'Address plant health issues (wilting, yellowing or dieback)',
+  containers: 'Clean or replace containers showing staining, residue or damage',
+  soil: 'Attend to growing medium issues (compaction, watering, drainage)',
+  pests: 'Treat pest or disease activity identified',
+  dust: 'Clean dust from foliage',
+  display: 'Address gaps or presentation issues in the display, including top dressing',
+  maintenance: 'Carry out general maintenance (dead/damaged foliage, shaping, gaps)',
+};
+
+// Builds a starting list of bulleted action points based on Fair / Below
+// standard ratings (prioritising "Below standard") and replacement counts.
+// Returns an array of plain-text strings.
+function generateActionPoints(zones) {
+  const below = [];
+  const fair = [];
+  const replacements = [];
+
+  zones.forEach((z) => {
+    CATEGORIES.forEach((c) => {
+      const e = z.categories[c.id];
+      if (e.rating === 'Below standard') {
+        below.push(`${z.name}: ${ACTION_PHRASES[c.id]}`);
+      } else if (e.rating === 'Fair') {
+        fair.push(`${z.name}: ${ACTION_PHRASES[c.id]}`);
+      }
+    });
+    if (z.replacements && z.replacements.count > 0) {
+      const n = z.replacements.count;
+      replacements.push(`${z.name}: replace ${n} plant${n === 1 ? '' : 's'}${z.replacements.notes ? ` (${z.replacements.notes.trim()})` : ''}`);
+    }
+  });
+
+  // Below standard first (highest priority), then replacements, then fair.
+  return [...below, ...replacements, ...fair];
+}
+
 function zoneProgress(zone) {
   let done = 0;
   CATEGORIES.forEach((c) => {
@@ -308,6 +346,7 @@ function newQARecord(overrides = {}) {
     },
     zones: [],
     overallSummary: '',
+    actionPoints: [],
     ...overrides,
   };
 }
@@ -836,6 +875,29 @@ async function exportQAPdf(record) {
     });
   };
 
+  // Renders a bulleted list, wrapping each item to the page width (with a
+  // hanging indent for wrapped lines) and handling page breaks.
+  const drawBulletedList = (items, headerTitle) => {
+    const bulletIndent = 5;
+    items.forEach((item) => {
+      const text = (item || '').trim();
+      if (!text) return;
+      const lines = doc.splitTextToSize(text, pageW - margin * 2 - bulletIndent);
+      lines.forEach((line, i) => {
+        if (y > pageH - margin) {
+          doc.addPage();
+          addHeaderBar(headerTitle);
+        }
+        if (i === 0) {
+          doc.text('\u2022', margin, y);
+        }
+        doc.text(line, margin + bulletIndent, y);
+        y += 5.5;
+      });
+    });
+  };
+
+
   doc.setFillColor(...ACCENT);
   doc.rect(0, 0, pageW, 60, 'F');
   doc.setTextColor(255, 255, 255);
@@ -879,10 +941,34 @@ async function exportQAPdf(record) {
   const overallText = record.overallSummary || generateOverallSummary(zones, siteInfo.site);
   drawWrappedParagraphs(overallText, siteInfo.site || '');
 
-  doc.setFontSize(9);
-  doc.setTextColor(120, 120, 120);
-  doc.text('This report provides a qualitative overview of site, plant and maintenance', margin, 270);
-  doc.text('conditions at the time of inspection, with photographic evidence where relevant.', margin, 275);
+  const actionPoints = (record.actionPoints && record.actionPoints.length > 0)
+    ? record.actionPoints
+    : generateActionPoints(zones);
+  const actionPointItems = actionPoints.map((p) => (p || '').trim()).filter(Boolean);
+  if (actionPointItems.length > 0) {
+    y += 6;
+    doc.setFont(undefined, 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(20, 20, 20);
+    if (y > pageH - margin) {
+      doc.addPage();
+      addHeaderBar(siteInfo.site || '');
+    }
+    doc.text('Action points', margin, y);
+    y += 7;
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(60, 60, 60);
+    drawBulletedList(actionPointItems, siteInfo.site || '');
+  }
+
+  if (y < 255) {
+    y += 8;
+    doc.setFontSize(9);
+    doc.setTextColor(120, 120, 120);
+    doc.text('This report provides a qualitative overview of site, plant and maintenance', margin, y);
+    doc.text('conditions at the time of inspection, with photographic evidence where relevant.', margin, y + 5);
+  }
 
   zones.forEach((zone) => {
     doc.addPage();
@@ -1010,6 +1096,12 @@ async function exportQAPdf(record) {
 
       y += rowMaxH + 16;
     };
+
+    const hasGalleryContent = issuePhotoEntries.length > 0 || goodPracticeEntries.length > 0;
+    if (hasGalleryContent) {
+      doc.addPage();
+      addHeaderBar(siteInfo.site || '');
+    }
 
     drawPhotoGallery('Issues identified', issuePhotoEntries);
     drawPhotoGallery('Good practice examples', goodPracticeEntries);
@@ -1797,6 +1889,64 @@ function QAFlow({ record, onChange, onClose }) {
             />
           </div>
 
+          <div className="bg-white border border-slate-200 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                Action points / priority actions
+              </p>
+              {!readOnly && (
+                <button
+                  onClick={() => update({ actionPoints: generateActionPoints(record.zones) })}
+                  className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
+                >
+                  <RefreshCw size={11} /> Regenerate
+                </button>
+              )}
+            </div>
+            {record.actionPoints.length === 0 ? (
+              <p className="text-sm text-slate-400 italic py-1">No action points yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {record.actionPoints.map((point, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <span className="text-slate-400 mt-2.5 text-xs">&bull;</span>
+                    <textarea
+                      value={point}
+                      onChange={(e) => {
+                        const next = [...record.actionPoints];
+                        next[idx] = e.target.value;
+                        update({ actionPoints: next });
+                      }}
+                      rows={1}
+                      readOnly={readOnly}
+                      className="flex-1 text-sm text-slate-700 border border-slate-200 rounded-lg p-2 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400 leading-snug"
+                    />
+                    {!readOnly && (
+                      <button
+                        onClick={() => {
+                          const next = record.actionPoints.filter((_, i) => i !== idx);
+                          update({ actionPoints: next });
+                        }}
+                        aria-label="Remove action point"
+                        className="mt-1 w-7 h-7 flex items-center justify-center rounded-md border border-slate-200 text-slate-400 hover:bg-slate-50 flex-shrink-0"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {!readOnly && (
+              <button
+                onClick={() => update({ actionPoints: [...record.actionPoints, ''] })}
+                className="mt-2 w-full flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
+              >
+                <Plus size={14} /> Add action point
+              </button>
+            )}
+          </div>
+
           <div className="flex gap-2">
             <button
               onClick={() => setScreen('report')}
@@ -1838,7 +1988,10 @@ function QAFlow({ record, onChange, onClose }) {
 
           <button
             onClick={() => {
-              if (!record.overallSummary) update({ overallSummary: generateOverallSummary(record.zones, record.siteInfo.site) });
+              const patch = {};
+              if (!record.overallSummary) patch.overallSummary = generateOverallSummary(record.zones, record.siteInfo.site);
+              if (!record.actionPoints || record.actionPoints.length === 0) patch.actionPoints = generateActionPoints(record.zones);
+              if (Object.keys(patch).length > 0) update(patch);
               setScreen('sitesummary');
             }}
             className="w-full py-2.5 rounded-lg border border-slate-200 text-sm text-slate-600 bg-white flex items-center justify-center gap-1.5"
@@ -1976,7 +2129,7 @@ export default function HortiCheckApp() {
     loadRecords().then((saved) => {
       if (cancelled) return;
       if (saved && Array.isArray(saved) && saved.length > 0) {
-        setRecords(saved);
+        setRecords(saved.map((r) => ({ actionPoints: [], ...r })));
       } else {
         // First run / nothing saved yet — seed with a sample record.
         const sample = newQARecord({
