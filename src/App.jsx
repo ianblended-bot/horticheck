@@ -3,7 +3,8 @@ import {
   ClipboardCheck, ClipboardList, AlertTriangle, Bug, Leaf, Settings,
   Plus, ArrowLeft, MapPin, Trash2, Camera, Flag, Pencil, ChevronDown,
   ChevronRight, Download, RefreshCw, Save, X, Calendar as CalendarIcon,
-  List as ListIcon, Clock, CheckCircle2, PlayCircle
+  List as ListIcon, Clock, CheckCircle2, PlayCircle, Image as ImageIcon,
+  Minus
 } from 'lucide-react';
 import { loadRecords, saveRecords } from './storage';
 
@@ -175,7 +176,7 @@ function generateSummary(zone) {
   if (parts.length === 0) {
     return 'No categories have been assessed in this zone yet.';
   }
-  return parts.join(' ');
+  return parts.join('\n\n');
 }
 
 function ratingCounts(zone) {
@@ -258,17 +259,95 @@ function zoneProgress(zone) {
   return done;
 }
 
+// Reads the EXIF orientation tag (1-8) from a JPEG ArrayBuffer.
+// Returns 1 (normal) if no EXIF orientation is found or the file isn't a JPEG.
+function getExifOrientation(arrayBuffer) {
+  const view = new DataView(arrayBuffer);
+  if (view.getUint16(0, false) !== 0xffd8) return 1; // not a JPEG
+  const length = view.byteLength;
+  let offset = 2;
+  while (offset < length) {
+    const marker = view.getUint16(offset, false);
+    offset += 2;
+    if (marker === 0xffe1) {
+      // APP1 marker — likely contains EXIF data
+      const exifLength = view.getUint16(offset, false);
+      if (view.getUint32(offset + 2, false) !== 0x45786966) return 1; // "Exif"
+      const tiffOffset = offset + 8;
+      const little = view.getUint16(tiffOffset, false) === 0x4949;
+      const firstIFDOffset = view.getUint32(tiffOffset + 4, little);
+      const dirStart = tiffOffset + firstIFDOffset;
+      const entries = view.getUint16(dirStart, little);
+      for (let i = 0; i < entries; i++) {
+        const entryOffset = dirStart + 2 + i * 12;
+        const tag = view.getUint16(entryOffset, little);
+        if (tag === 0x0112) {
+          return view.getUint16(entryOffset + 8, little);
+        }
+      }
+      return 1;
+    } else if ((marker & 0xff00) !== 0xff00) {
+      break;
+    } else {
+      offset += view.getUint16(offset, false);
+    }
+  }
+  return 1;
+}
+
+// Reads an image file, corrects for EXIF orientation by redrawing it onto a
+// canvas in the correct upright orientation, and returns a JPEG data URL.
+// This ensures the stored image is "physically" correct so it displays
+// consistently in <img> tags, annotation canvases, and PDF exports.
 function readFileAsImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
+      const arrayBuffer = reader.result;
+      const orientation = getExifOrientation(arrayBuffer);
+      const blob = new Blob([arrayBuffer], { type: file.type });
+      const url = URL.createObjectURL(blob);
       const img = new Image();
-      img.onload = () => resolve({ src: reader.result, width: img.width, height: img.height });
-      img.onerror = reject;
-      img.src = reader.result;
+      img.onload = () => {
+        const { width: srcW, height: srcH } = img;
+        let canvasW = srcW;
+        let canvasH = srcH;
+        if (orientation >= 5 && orientation <= 8) {
+          canvasW = srcH;
+          canvasH = srcW;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = canvasW;
+        canvas.height = canvasH;
+        const ctx = canvas.getContext('2d');
+
+        switch (orientation) {
+          case 2: ctx.transform(-1, 0, 0, 1, srcW, 0); break;
+          case 3: ctx.transform(-1, 0, 0, -1, srcW, srcH); break;
+          case 4: ctx.transform(1, 0, 0, -1, 0, srcH); break;
+          case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
+          case 6: ctx.transform(0, 1, -1, 0, srcH, 0); break;
+          case 7: ctx.transform(0, -1, -1, 0, srcH, srcW); break;
+          case 8: ctx.transform(0, -1, 1, 0, 0, srcW); break;
+          default: break; // 1: no transform needed
+        }
+
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        resolve({
+          src: canvas.toDataURL('image/jpeg', 0.9),
+          width: canvasW,
+          height: canvasH,
+        });
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Failed to load image'));
+      };
+      img.src = url;
     };
     reader.onerror = reject;
-    reader.readAsDataURL(file);
+    reader.readAsArrayBuffer(file);
   });
 }
 
@@ -403,26 +482,47 @@ function AnnotatorModal({ photo, onSave, onClose }) {
   );
 }
 
-function PhotoThumb({ photo, onAnnotate, onFlag, onRemove }) {
+function PhotoThumb({ photo, onAnnotate, onFlag, onRemove, readOnly }) {
   return (
-    <div className="relative w-16 h-16 rounded-lg border border-slate-200 overflow-hidden bg-slate-50 group flex-shrink-0">
-      <img src={photo.annotatedSrc || photo.src} alt="" className="w-full h-full object-cover" />
-      {photo.flagged && (
-        <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-red-500 border border-white flex items-center justify-center">
-          <Flag size={9} className="text-white" />
+    <div className="flex-shrink-0 w-28">
+      <div className="relative w-28 h-28 rounded-lg border border-slate-200 overflow-hidden bg-slate-50">
+        <img src={photo.annotatedSrc || photo.src} alt="" className="w-full h-full object-cover" />
+        {photo.flagged && (
+          <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-red-500 border border-white flex items-center justify-center">
+            <Flag size={11} className="text-white" />
+          </div>
+        )}
+      </div>
+      {!readOnly && (
+        <div className="flex items-center justify-center gap-1 mt-1.5">
+          <button
+            onClick={onAnnotate}
+            title="Draw on photo"
+            aria-label="Draw on photo"
+            className="flex-1 flex items-center justify-center py-1.5 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 active:bg-slate-100"
+          >
+            <Pencil size={15} />
+          </button>
+          <button
+            onClick={onFlag}
+            title="Flag as issue"
+            aria-label="Flag as issue"
+            className={`flex-1 flex items-center justify-center py-1.5 rounded-md border active:bg-slate-100 ${
+              photo.flagged ? 'border-red-300 text-red-500 bg-red-50' : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+            }`}
+          >
+            <Flag size={15} />
+          </button>
+          <button
+            onClick={onRemove}
+            title="Remove photo"
+            aria-label="Remove photo"
+            className="flex-1 flex items-center justify-center py-1.5 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 active:bg-slate-100"
+          >
+            <Trash2 size={15} />
+          </button>
         </div>
       )}
-      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100">
-        <button onClick={onAnnotate} title="Draw on photo" className="text-white p-1">
-          <Pencil size={14} />
-        </button>
-        <button onClick={onFlag} title="Flag as issue" className="text-white p-1">
-          <Flag size={14} />
-        </button>
-        <button onClick={onRemove} title="Remove photo" className="text-white p-1">
-          <Trash2 size={14} />
-        </button>
-      </div>
     </div>
   );
 }
@@ -433,7 +533,8 @@ function PhotoThumb({ photo, onAnnotate, onFlag, onRemove }) {
 
 function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackChange, onNotesChange, onAddPhotos, onAnnotate, onFlagToggle, onRemovePhoto, onCaptionChange, readOnly }) {
   const Icon = category.icon;
-  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
 
   return (
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
@@ -512,14 +613,15 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
 
           <div>
             <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Photos</p>
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3">
               {entry.photos.map((photo) => (
-                <div key={photo.id} className="flex items-center gap-2">
+                <div key={photo.id} className="flex gap-3">
                   <PhotoThumb
                     photo={photo}
                     onAnnotate={() => onAnnotate(photo)}
                     onFlag={() => onFlagToggle(photo.id)}
                     onRemove={() => onRemovePhoto(photo.id)}
+                    readOnly={readOnly}
                   />
                   <input
                     type="text"
@@ -527,24 +629,43 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
                     onChange={(e) => onCaptionChange(photo.id, e.target.value)}
                     placeholder="Caption (optional)"
                     readOnly={readOnly}
-                    className="flex-1 text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
+                    className="flex-1 self-start text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
                   />
                 </div>
               ))}
               {!readOnly && (
-                <button
-                  onClick={() => fileInputRef.current.click()}
-                  className="flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
-                >
-                  <Camera size={16} /> Add photo
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => cameraInputRef.current.click()}
+                    className="flex-1 flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
+                  >
+                    <Camera size={16} /> Take photo
+                  </button>
+                  <button
+                    onClick={() => galleryInputRef.current.click()}
+                    className="flex-1 flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
+                  >
+                    <ImageIcon size={16} /> Upload
+                  </button>
+                </div>
               )}
               <input
-                ref={fileInputRef}
+                ref={cameraInputRef}
                 type="file"
                 accept="image/*"
                 multiple
                 capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  onAddPhotos(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                multiple
                 className="hidden"
                 onChange={(e) => {
                   onAddPhotos(e.target.files);
@@ -564,7 +685,8 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
 --------------------------------------------------------------- */
 
 function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onNotesChange, onAddPhotos, onAnnotate, onFlagToggle, onRemovePhoto, onCaptionChange, readOnly }) {
-  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
 
   return (
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
@@ -601,14 +723,34 @@ function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onN
             <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1">
               Number of replacements required
             </p>
-            <input
-              type="number"
-              min="0"
-              value={replacements.count}
-              onChange={(e) => onCountChange(Math.max(0, parseInt(e.target.value, 10) || 0))}
-              readOnly={readOnly}
-              className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-teal-400"
-            />
+            <div className="flex items-center gap-2">
+              {!readOnly && (
+                <button
+                  onClick={() => onCountChange(Math.max(0, (replacements.count || 0) - 1))}
+                  aria-label="Decrease replacements count"
+                  className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 active:bg-slate-100 flex-shrink-0"
+                >
+                  <Minus size={16} />
+                </button>
+              )}
+              <input
+                type="number"
+                min="0"
+                value={replacements.count}
+                onChange={(e) => onCountChange(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                readOnly={readOnly}
+                className="flex-1 text-sm text-center text-slate-700 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-teal-400"
+              />
+              {!readOnly && (
+                <button
+                  onClick={() => onCountChange((replacements.count || 0) + 1)}
+                  aria-label="Increase replacements count"
+                  className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 active:bg-slate-100 flex-shrink-0"
+                >
+                  <Plus size={16} />
+                </button>
+              )}
+            </div>
           </div>
 
           <div>
@@ -627,14 +769,15 @@ function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onN
 
           <div>
             <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Photos</p>
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3">
               {replacements.photos.map((photo) => (
-                <div key={photo.id} className="flex items-center gap-2">
+                <div key={photo.id} className="flex gap-3">
                   <PhotoThumb
                     photo={photo}
                     onAnnotate={() => onAnnotate(photo)}
                     onFlag={() => onFlagToggle(photo.id)}
                     onRemove={() => onRemovePhoto(photo.id)}
+                    readOnly={readOnly}
                   />
                   <input
                     type="text"
@@ -642,24 +785,43 @@ function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onN
                     onChange={(e) => onCaptionChange(photo.id, e.target.value)}
                     placeholder="Caption (optional)"
                     readOnly={readOnly}
-                    className="flex-1 text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
+                    className="flex-1 self-start text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
                   />
                 </div>
               ))}
               {!readOnly && (
-                <button
-                  onClick={() => fileInputRef.current.click()}
-                  className="flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
-                >
-                  <Camera size={16} /> Add photo
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => cameraInputRef.current.click()}
+                    className="flex-1 flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
+                  >
+                    <Camera size={16} /> Take photo
+                  </button>
+                  <button
+                    onClick={() => galleryInputRef.current.click()}
+                    className="flex-1 flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
+                  >
+                    <ImageIcon size={16} /> Upload
+                  </button>
+                </div>
               )}
               <input
-                ref={fileInputRef}
+                ref={cameraInputRef}
                 type="file"
                 accept="image/*"
                 multiple
                 capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  onAddPhotos(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                multiple
                 className="hidden"
                 onChange={(e) => {
                   onAddPhotos(e.target.files);
@@ -714,6 +876,25 @@ async function exportQAPdf(record) {
     y = 24;
   };
 
+  // Renders text split into paragraphs (on blank lines / \n\n), wrapping
+  // each paragraph to the page width and adding extra vertical spacing
+  // between paragraphs. Handles page breaks via addHeaderBar.
+  const drawWrappedParagraphs = (text, headerTitle) => {
+    const paragraphs = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    paragraphs.forEach((paragraph, idx) => {
+      const lines = doc.splitTextToSize(paragraph, pageW - margin * 2);
+      lines.forEach((line) => {
+        if (y > pageH - margin) {
+          doc.addPage();
+          addHeaderBar(headerTitle);
+        }
+        doc.text(line, margin, y);
+        y += 5.5;
+      });
+      if (idx < paragraphs.length - 1) y += 2.5; // extra gap between paragraphs
+    });
+  };
+
   doc.setFillColor(...ACCENT);
   doc.rect(0, 0, pageW, 60, 'F');
   doc.setTextColor(255, 255, 255);
@@ -755,10 +936,7 @@ async function exportQAPdf(record) {
   doc.setFontSize(10);
   doc.setTextColor(60, 60, 60);
   const overallText = record.overallSummary || generateOverallSummary(zones, siteInfo.site);
-  doc.splitTextToSize(overallText, pageW - margin * 2).forEach((line) => {
-    doc.text(line, margin, y);
-    y += 5.5;
-  });
+  drawWrappedParagraphs(overallText, siteInfo.site || '');
 
   doc.setFontSize(9);
   doc.setTextColor(120, 120, 120);
@@ -813,34 +991,31 @@ async function exportQAPdf(record) {
     doc.setFontSize(10);
     doc.setTextColor(60, 60, 60);
     const summaryText = zone.summary || generateSummary(zone);
-    const lines = doc.splitTextToSize(summaryText, pageW - margin * 2);
-    lines.forEach((line) => {
-      if (y > pageH - margin) {
-        doc.addPage();
-        addHeaderBar(siteInfo.site || '');
-      }
-      doc.text(line, margin, y);
-      y += 5.5;
-    });
+    drawWrappedParagraphs(summaryText, siteInfo.site || '');
 
-    const photoEntries = [];
+    const issuePhotoEntries = [];
+    const goodPracticeEntries = [];
     CATEGORIES.forEach((c) => {
       const entry = zone.categories[c.id];
       entry.photos.forEach((p) => {
-        if (p.flagged || p.annotatedSrc) {
-          photoEntries.push({ category: c.label, photo: p });
-        }
+        if (!(p.flagged || p.annotatedSrc)) return;
+        const target = entry.rating === 'Fair' || entry.rating === 'Below standard'
+          ? issuePhotoEntries
+          : goodPracticeEntries;
+        target.push({ category: c.label, photo: p });
       });
     });
     if (zone.replacements) {
       zone.replacements.photos.forEach((p) => {
         if (p.flagged || p.annotatedSrc) {
-          photoEntries.push({ category: 'Replacements', photo: p });
+          issuePhotoEntries.push({ category: 'Replacements', photo: p });
         }
       });
     }
 
-    if (photoEntries.length > 0) {
+    // Renders a labelled photo gallery (grid of thumbnails with category + caption).
+    const drawPhotoGallery = (heading, photoEntries) => {
+      if (photoEntries.length === 0) return;
       y += 6;
       if (y > pageH - 60) {
         doc.addPage();
@@ -849,7 +1024,7 @@ async function exportQAPdf(record) {
       doc.setFont(undefined, 'bold');
       doc.setFontSize(11);
       doc.setTextColor(20, 20, 20);
-      doc.text('Issues identified', margin, y);
+      doc.text(heading, margin, y);
       y += 8;
 
       const imgW = 80;
@@ -870,6 +1045,7 @@ async function exportQAPdf(record) {
           doc.addPage();
           addHeaderBar(siteInfo.site || '');
           x = margin;
+          y = 24;
         }
 
         try {
@@ -890,7 +1066,12 @@ async function exportQAPdf(record) {
         rowMaxH = Math.max(rowMaxH, imgH);
         x += imgW + 8;
       });
-    }
+
+      y += rowMaxH + 16;
+    };
+
+    drawPhotoGallery('Issues identified', issuePhotoEntries);
+    drawPhotoGallery('Good practice examples', goodPracticeEntries);
   });
 
   doc.save(`HortiCheck_${(siteInfo.site || 'report').replace(/\s+/g, '_')}.pdf`);
@@ -1908,14 +2089,14 @@ export default function HortiCheckApp() {
 
   if (!loaded) {
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex items-center justify-center">
+      <div className="min-h-screen bg-[#F1EFE8] font-sans flex items-center justify-center">
         <p className="text-sm text-slate-400">Loading...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans md:max-w-md md:mx-auto md:border md:border-slate-200 md:my-4 md:rounded-2xl md:overflow-hidden">
+    <div className="min-h-screen bg-[#F1EFE8] font-sans md:max-w-md md:mx-auto md:border md:border-slate-200 md:my-4 md:rounded-2xl md:overflow-hidden">
       {view.screen === 'dashboard' && (
         <Dashboard
           records={records}
