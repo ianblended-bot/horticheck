@@ -97,28 +97,31 @@ const CATEGORIES = [
     },
   },
   {
-    id: 'hazards',
-    label: 'Health & safety',
-    icon: AlertTriangle,
-    type: 'yesno',
-    question: 'Are there any hazards not included in RAMs?',
-    paragraphs: {
-      No: 'No hazards were identified beyond those already covered in the existing Risk Assessment Method Statement (RAMs).',
-      Yes: 'A hazard was identified that is not currently covered in the existing Risk Assessment Method Statement (RAMs) and requires attention.',
-    },
-  },
-  {
-    id: 'maintenance',
-    label: 'Maintenance standards',
+    id: 'display',
+    label: 'Display quality',
     icon: ClipboardList,
     paragraphs: {
-      Excellent: 'Maintenance standards are excellent. Plants are neatly presented, well-shaped, free from dead or damaged foliage, and displays show no noticeable gaps.',
-      Good: 'Maintenance standards are good overall, with no significant gaps in displays. Minor tidying, such as removal of occasional dead leaves, would further improve presentation.',
-      Fair: 'Maintenance standards are fair. Dead or damaged foliage, irregular shaping, noticeable gaps in displays or other minor issues were noted and require attention.',
-      'Below standard': 'Maintenance standards are below the expected level. Significant dead or damaged foliage, poor shaping, noticeable gaps in displays or neglect was observed and requires prompt attention.',
+      Excellent: 'Display quality is excellent. Plants are well pruned with a neat, balanced appearance, top dressing is neat and presentable, and there are no noticeable gaps in the display.',
+      Good: 'Display quality is good overall. Plants are generally well maintained with a tidy, balanced appearance, top dressing is in good condition, and there are no significant gaps in the display. Minor refinements would further enhance presentation.',
+      Fair: 'Display quality is fair. Some plants are becoming overgrown or have an untidy, unbalanced appearance and would benefit from pruning, and some gaps in the display are noticeable and affect overall presentation.',
+      'Below standard': 'Display quality is below standard. Plants are overgrown with an untidy, unbalanced appearance and require pruning, top dressing is patchy or missing in places, and noticeable gaps in the display are affecting the overall aesthetic.',
     },
   },
 ];
+
+// Health & safety check — rendered as its own card after Replacements,
+// not as part of the main CATEGORIES list.
+const HAZARD_CATEGORY = {
+  id: 'hazards',
+  label: 'Health & safety',
+  icon: AlertTriangle,
+  type: 'yesno',
+  question: 'Are there any hazards not included in RAMs?',
+  paragraphs: {
+    No: 'No hazards were identified beyond those already covered in the existing Risk Assessment Method Statement (RAMs).',
+    Yes: 'A hazard was identified that is not currently covered in the existing Risk Assessment Method Statement (RAMs) and requires attention.',
+  },
+};
 
 /* ---------------------------------------------------------------
    Helpers
@@ -149,6 +152,7 @@ function newZone(name) {
   CATEGORIES.forEach((c) => {
     categories[c.id] = { rating: null, feedback: '', notes: '', photos: [] };
   });
+  categories[HAZARD_CATEGORY.id] = { rating: null, feedback: '', notes: '', photos: [] };
   return {
     id: `zone-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     name,
@@ -174,6 +178,14 @@ function generateSummary(zone) {
     let text = `${zone.replacements.count} plant${zone.replacements.count === 1 ? '' : 's'} ${zone.replacements.count === 1 ? 'has' : 'have'} been identified as requiring replacement in this zone.`;
     if (zone.replacements.notes && zone.replacements.notes.trim()) {
       text += ` ${zone.replacements.notes.trim()}`;
+    }
+    parts.push(text);
+  }
+  const hazardEntry = zone.categories[HAZARD_CATEGORY.id];
+  if (hazardEntry && hazardEntry.rating) {
+    let text = hazardEntry.feedback || HAZARD_CATEGORY.paragraphs[hazardEntry.rating];
+    if (hazardEntry.notes && hazardEntry.notes.trim()) {
+      text += ` ${hazardEntry.notes.trim()}`;
     }
     parts.push(text);
   }
@@ -221,15 +233,13 @@ function generateOverallSummary(zones, siteName) {
     CATEGORIES.forEach((c) => {
       const e = z.categories[c.id];
       if (!e.rating) return;
-      if (c.type === 'yesno') {
-        if (e.rating === 'Yes') hazardZones.push(z.name);
-        return;
-      }
       totals[e.rating]++;
       assessed++;
       if (e.rating === 'Below standard') below.push(`${z.name} (${c.label})`);
       if (e.rating === 'Fair') fair.push(`${z.name} (${c.label})`);
     });
+    const hazardEntry = z.categories[HAZARD_CATEGORY.id];
+    if (hazardEntry && hazardEntry.rating === 'Yes') hazardZones.push(z.name);
     if (z.replacements && z.replacements.count > 0) {
       totalReplacements += z.replacements.count;
       replacementZones.push(`${z.name} (${z.replacements.count})`);
@@ -269,7 +279,7 @@ const ACTION_PHRASES = {
   soil: 'Attend to growing medium issues (compaction, watering, drainage)',
   pests: 'Treat pest or disease activity identified',
   dust: 'Clean dust from foliage',
-  maintenance: 'Carry out general maintenance (dead/damaged foliage, shaping, gaps)',
+  display: 'Prune overgrown growth and tidy the display, including top dressing and gaps',
 };
 
 // Builds a starting list of bulleted action points based on Fair / Below
@@ -284,19 +294,17 @@ function generateActionPoints(zones) {
   zones.forEach((z) => {
     CATEGORIES.forEach((c) => {
       const e = z.categories[c.id];
-      if (c.type === 'yesno') {
-        if (e.rating === 'Yes') {
-          const detail = e.notes && e.notes.trim() ? `: ${e.notes.trim()}` : '';
-          hazards.push(`${z.name}: Hazard not covered by RAMs identified${detail}`);
-        }
-        return;
-      }
       if (e.rating === 'Below standard') {
         below.push(`${z.name}: ${ACTION_PHRASES[c.id]}`);
       } else if (e.rating === 'Fair') {
         fair.push(`${z.name}: ${ACTION_PHRASES[c.id]}`);
       }
     });
+    const hazardEntry = z.categories[HAZARD_CATEGORY.id];
+    if (hazardEntry && hazardEntry.rating === 'Yes') {
+      const detail = hazardEntry.notes && hazardEntry.notes.trim() ? `: ${hazardEntry.notes.trim()}` : '';
+      hazards.push(`${z.name}: Hazard not covered by RAMs identified${detail}`);
+    }
     if (z.replacements && z.replacements.count > 0) {
       const n = z.replacements.count;
       replacements.push(`${z.name}: replace ${n} plant${n === 1 ? '' : 's'}${z.replacements.notes ? ` (${z.replacements.notes.trim()})` : ''}`);
@@ -1068,6 +1076,17 @@ async function exportQAPdf(record) {
       y += 6;
     }
 
+    const hazardEntry = zone.categories[HAZARD_CATEGORY.id];
+    if (hazardEntry && hazardEntry.rating) {
+      doc.setFont(undefined, 'normal');
+      doc.setTextColor(60, 60, 60);
+      doc.text(HAZARD_CATEGORY.question, margin, y);
+      doc.setTextColor(...PDF_COLORS[hazardEntry.rating]);
+      doc.setFont(undefined, 'bold');
+      doc.text(hazardEntry.rating, pageW - margin, y, { align: 'right' });
+      y += 6;
+    }
+
     y += 4;
     doc.setDrawColor(220, 220, 220);
     doc.line(margin, y, pageW - margin, y);
@@ -1097,6 +1116,12 @@ async function exportQAPdf(record) {
       zone.replacements.photos.forEach((p) => {
         if (p.flagType === 'issue') issuePhotoEntries.push({ category: 'Replacements', photo: p });
         else if (p.flagType === 'good') goodPracticeEntries.push({ category: 'Replacements', photo: p });
+      });
+    }
+    if (zone.categories[HAZARD_CATEGORY.id]) {
+      zone.categories[HAZARD_CATEGORY.id].photos.forEach((p) => {
+        if (p.flagType === 'issue') issuePhotoEntries.push({ category: HAZARD_CATEGORY.label, photo: p });
+        else if (p.flagType === 'good') goodPracticeEntries.push({ category: HAZARD_CATEGORY.label, photo: p });
       });
     }
 
@@ -1479,7 +1504,7 @@ function QAFlow({ record, onChange, onClose }) {
   const currentZone = record.zones[currentZoneIdx];
 
   const handleRate = (zoneIdx, catId, rating) => {
-    const category = CATEGORIES.find((c) => c.id === catId);
+    const category = catId === HAZARD_CATEGORY.id ? HAZARD_CATEGORY : CATEGORIES.find((c) => c.id === catId);
     updateCategory(zoneIdx, catId, { rating, feedback: category.paragraphs[rating] });
     if (record.status === 'scheduled') update({ status: 'in_progress' });
   };
@@ -1814,6 +1839,21 @@ function QAFlow({ record, onChange, onClose }) {
               onSetFlag={(photoId, flagType) => setFlag(currentZoneIdx, '_replacements', photoId, flagType)}
               onRemovePhoto={(photoId) => removePhoto(currentZoneIdx, '_replacements', photoId)}
               onCaptionChange={(photoId, caption) => setCaption(currentZoneIdx, '_replacements', photoId, caption)}
+              readOnly={readOnly}
+            />
+            <CategoryCard
+              category={HAZARD_CATEGORY}
+              entry={currentZone.categories[HAZARD_CATEGORY.id]}
+              expanded={expandedCat === HAZARD_CATEGORY.id}
+              onToggle={() => setExpandedCat(expandedCat === HAZARD_CATEGORY.id ? null : HAZARD_CATEGORY.id)}
+              onRate={(rating) => handleRate(currentZoneIdx, HAZARD_CATEGORY.id, rating)}
+              onFeedbackChange={(val) => updateCategory(currentZoneIdx, HAZARD_CATEGORY.id, { feedback: val })}
+              onNotesChange={(val) => updateCategory(currentZoneIdx, HAZARD_CATEGORY.id, { notes: val })}
+              onAddPhotos={(files) => handleAddPhotos(currentZoneIdx, HAZARD_CATEGORY.id, files)}
+              onAnnotate={(photo) => setAnnotating({ catId: HAZARD_CATEGORY.id, photo })}
+              onSetFlag={(photoId, flagType) => setFlag(currentZoneIdx, HAZARD_CATEGORY.id, photoId, flagType)}
+              onRemovePhoto={(photoId) => removePhoto(currentZoneIdx, HAZARD_CATEGORY.id, photoId)}
+              onCaptionChange={(photoId, caption) => setCaption(currentZoneIdx, HAZARD_CATEGORY.id, photoId, caption)}
               readOnly={readOnly}
             />
           </div>
@@ -2194,18 +2234,28 @@ export default function HortiCheckApp() {
   const migrateRecord = (r) => ({
     actionPoints: [],
     ...r,
-    zones: (r.zones || []).map((z) => ({
-      ...z,
-      categories: Object.fromEntries(
+    zones: (r.zones || []).map((z) => {
+      const migratedCategories = Object.fromEntries(
         Object.entries(z.categories || {}).map(([key, entry]) => [
           key,
           { ...entry, photos: (entry.photos || []).map(migratePhoto) },
         ])
-      ),
-      replacements: z.replacements
-        ? { ...z.replacements, photos: (z.replacements.photos || []).map(migratePhoto) }
-        : z.replacements,
-    })),
+      );
+      // Backfill any categories (e.g. Display quality, Health & safety) that
+      // didn't exist yet when this record was originally created.
+      [...CATEGORIES, HAZARD_CATEGORY].forEach((c) => {
+        if (!migratedCategories[c.id]) {
+          migratedCategories[c.id] = { rating: null, feedback: '', notes: '', photos: [] };
+        }
+      });
+      return {
+        ...z,
+        categories: migratedCategories,
+        replacements: z.replacements
+          ? { ...z.replacements, photos: (z.replacements.photos || []).map(migratePhoto) }
+          : z.replacements,
+      };
+    }),
   });
 
   // Load saved records from IndexedDB on first mount.
