@@ -4,7 +4,7 @@ import {
   Plus, ArrowLeft, MapPin, Trash2, Camera, Flag, Pencil, ChevronDown,
   ChevronRight, Download, RefreshCw, Save, X, Calendar as CalendarIcon,
   List as ListIcon, Clock, CheckCircle2, PlayCircle, Image as ImageIcon,
-  Minus
+  Minus, ThumbsUp
 } from 'lucide-react';
 import { loadRecords, saveRecords } from './storage';
 
@@ -27,6 +27,8 @@ const RATING_STYLES = {
   Good: 'bg-blue-50 text-blue-700 border-blue-300',
   Fair: 'bg-amber-50 text-amber-700 border-amber-300',
   'Below standard': 'bg-red-50 text-red-700 border-red-300',
+  Yes: 'bg-slate-100 text-slate-700 border-slate-300',
+  No: 'bg-slate-100 text-slate-700 border-slate-300',
 };
 
 const RATING_PILL_ACTIVE = {
@@ -34,6 +36,8 @@ const RATING_PILL_ACTIVE = {
   Good: 'bg-blue-600 text-white border-blue-600',
   Fair: 'bg-amber-500 text-white border-amber-500',
   'Below standard': 'bg-red-600 text-white border-red-600',
+  Yes: 'bg-slate-600 text-white border-slate-600',
+  No: 'bg-slate-600 text-white border-slate-600',
 };
 
 const CATEGORIES = [
@@ -93,14 +97,14 @@ const CATEGORIES = [
     },
   },
   {
-    id: 'display',
-    label: 'Display quality',
-    icon: ClipboardList,
+    id: 'hazards',
+    label: 'Health & safety',
+    icon: AlertTriangle,
+    type: 'yesno',
+    question: 'Are there any hazards not included in RAMs?',
     paragraphs: {
-      Excellent: 'Display quality is excellent. Plant groupings are well arranged, top dressing is neat and presentable, with no noticeable gaps in planting, and the overall display creates a positive impression.',
-      Good: 'Display quality is good overall, with plant groupings well presented, top dressing in good condition and no significant gaps in the display. Minor refinements would further enhance the display.',
-      Fair: 'Display quality is fair. Top dressing or plant arrangement in some areas requires attention, and some gaps in the display are noticeable and affect overall presentation.',
-      'Below standard': 'Display quality is below standard. Top dressing is patchy or missing in places, noticeable gaps in the display are affecting the overall aesthetic, and plant arrangement requires significant improvement.',
+      No: 'No hazards were identified beyond those already covered in the existing Risk Assessment Method Statement (RAMs).',
+      Yes: 'A hazard was identified that is not currently covered in the existing Risk Assessment Method Statement (RAMs) and requires attention.',
     },
   },
   {
@@ -210,24 +214,28 @@ function generateOverallSummary(zones, siteName) {
   const totals = { Excellent: 0, Good: 0, Fair: 0, 'Below standard': 0 };
   const below = [];
   const fair = [];
+  const hazardZones = [];
   let totalReplacements = 0;
   const replacementZones = [];
   zones.forEach((z) => {
     CATEGORIES.forEach((c) => {
       const e = z.categories[c.id];
-      if (e.rating) {
-        totals[e.rating]++;
-        assessed++;
-        if (e.rating === 'Below standard') below.push(`${z.name} (${c.label})`);
-        if (e.rating === 'Fair') fair.push(`${z.name} (${c.label})`);
+      if (!e.rating) return;
+      if (c.type === 'yesno') {
+        if (e.rating === 'Yes') hazardZones.push(z.name);
+        return;
       }
+      totals[e.rating]++;
+      assessed++;
+      if (e.rating === 'Below standard') below.push(`${z.name} (${c.label})`);
+      if (e.rating === 'Fair') fair.push(`${z.name} (${c.label})`);
     });
     if (z.replacements && z.replacements.count > 0) {
       totalReplacements += z.replacements.count;
       replacementZones.push(`${z.name} (${z.replacements.count})`);
     }
   });
-  if (assessed === 0 && totalReplacements === 0) return `No categories have been assessed yet across the ${zones.length} zone${zones.length === 1 ? '' : 's'} covered.`;
+  if (assessed === 0 && totalReplacements === 0 && hazardZones.length === 0) return `No categories have been assessed yet across the ${zones.length} zone${zones.length === 1 ? '' : 's'} covered.`;
 
   let dominant = 'Good';
   let max = -1;
@@ -236,13 +244,16 @@ function generateOverallSummary(zones, siteName) {
   const siteLabel = siteName ? ` at ${siteName}` : '';
   let text = `This assessment covered ${zones.length} zone${zones.length === 1 ? '' : 's'}${siteLabel}. Overall, conditions were assessed as ${OVERALL_DESC[dominant]}.`;
 
+  if (hazardZones.length > 0) {
+    text += ` Hazards not covered by the existing RAMs were identified in: ${hazardZones.join(', ')}.`;
+  }
   if (below.length > 0) {
     text += ` The following require priority attention: ${below.join(', ')}.`;
   }
   if (fair.length > 0) {
     text += ` Additional areas noted as fair and worth monitoring: ${fair.join(', ')}.`;
   }
-  if (below.length === 0 && fair.length === 0 && totalReplacements === 0) {
+  if (below.length === 0 && fair.length === 0 && totalReplacements === 0 && hazardZones.length === 0) {
     text += ' No significant issues were identified across the site.';
   }
   if (totalReplacements > 0) {
@@ -258,7 +269,6 @@ const ACTION_PHRASES = {
   soil: 'Attend to growing medium issues (compaction, watering, drainage)',
   pests: 'Treat pest or disease activity identified',
   dust: 'Clean dust from foliage',
-  display: 'Address gaps or presentation issues in the display, including top dressing',
   maintenance: 'Carry out general maintenance (dead/damaged foliage, shaping, gaps)',
 };
 
@@ -266,6 +276,7 @@ const ACTION_PHRASES = {
 // standard ratings (prioritising "Below standard") and replacement counts.
 // Returns an array of plain-text strings.
 function generateActionPoints(zones) {
+  const hazards = [];
   const below = [];
   const fair = [];
   const replacements = [];
@@ -273,6 +284,13 @@ function generateActionPoints(zones) {
   zones.forEach((z) => {
     CATEGORIES.forEach((c) => {
       const e = z.categories[c.id];
+      if (c.type === 'yesno') {
+        if (e.rating === 'Yes') {
+          const detail = e.notes && e.notes.trim() ? `: ${e.notes.trim()}` : '';
+          hazards.push(`${z.name}: Hazard not covered by RAMs identified${detail}`);
+        }
+        return;
+      }
       if (e.rating === 'Below standard') {
         below.push(`${z.name}: ${ACTION_PHRASES[c.id]}`);
       } else if (e.rating === 'Fair') {
@@ -285,8 +303,8 @@ function generateActionPoints(zones) {
     }
   });
 
-  // Below standard first (highest priority), then replacements, then fair.
-  return [...below, ...replacements, ...fair];
+  // Hazards first (highest priority), then below standard, then replacements, then fair.
+  return [...hazards, ...below, ...replacements, ...fair];
 }
 
 function zoneProgress(zone) {
@@ -462,44 +480,60 @@ function AnnotatorModal({ photo, onSave, onClose }) {
   );
 }
 
-function PhotoThumb({ photo, onAnnotate, onFlag, onRemove, readOnly }) {
+function PhotoThumb({ photo, onAnnotate, onFlagIssue, onFlagGood, onRemove, readOnly }) {
+  const flagType = photo.flagType || null;
   return (
     <div className="flex-shrink-0 w-28">
       <div className="relative w-28 h-28 rounded-lg border border-slate-200 overflow-hidden bg-slate-50">
         <img src={photo.annotatedSrc || photo.src} alt="" className="w-full h-full object-cover" />
-        {photo.flagged && (
+        {flagType === 'issue' && (
           <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-red-500 border border-white flex items-center justify-center">
             <Flag size={11} className="text-white" />
           </div>
         )}
+        {flagType === 'good' && (
+          <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-green-500 border border-white flex items-center justify-center">
+            <ThumbsUp size={11} className="text-white" />
+          </div>
+        )}
       </div>
       {!readOnly && (
-        <div className="flex items-center justify-center gap-1 mt-1.5">
+        <div className="grid grid-cols-2 gap-1 mt-1.5">
           <button
             onClick={onAnnotate}
             title="Draw on photo"
             aria-label="Draw on photo"
-            className="flex-1 flex items-center justify-center py-1.5 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 active:bg-slate-100"
+            className="flex items-center justify-center py-1.5 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 active:bg-slate-100"
           >
             <Pencil size={15} />
-          </button>
-          <button
-            onClick={onFlag}
-            title="Flag as issue"
-            aria-label="Flag as issue"
-            className={`flex-1 flex items-center justify-center py-1.5 rounded-md border active:bg-slate-100 ${
-              photo.flagged ? 'border-red-300 text-red-500 bg-red-50' : 'border-slate-200 text-slate-500 hover:bg-slate-50'
-            }`}
-          >
-            <Flag size={15} />
           </button>
           <button
             onClick={onRemove}
             title="Remove photo"
             aria-label="Remove photo"
-            className="flex-1 flex items-center justify-center py-1.5 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 active:bg-slate-100"
+            className="flex items-center justify-center py-1.5 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 active:bg-slate-100"
           >
             <Trash2 size={15} />
+          </button>
+          <button
+            onClick={onFlagIssue}
+            title="Flag as issue"
+            aria-label="Flag as issue"
+            className={`flex items-center justify-center gap-1 py-1.5 rounded-md border text-xs active:bg-slate-100 ${
+              flagType === 'issue' ? 'border-red-300 text-red-600 bg-red-50' : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+            }`}
+          >
+            <Flag size={13} /> Issue
+          </button>
+          <button
+            onClick={onFlagGood}
+            title="Flag as good practice"
+            aria-label="Flag as good practice"
+            className={`flex items-center justify-center gap-1 py-1.5 rounded-md border text-xs active:bg-slate-100 ${
+              flagType === 'good' ? 'border-green-300 text-green-600 bg-green-50' : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+            }`}
+          >
+            <ThumbsUp size={13} /> Good
           </button>
         </div>
       )}
@@ -511,7 +545,7 @@ function PhotoThumb({ photo, onAnnotate, onFlag, onRemove, readOnly }) {
    Category card (QA assessment)
 --------------------------------------------------------------- */
 
-function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackChange, onNotesChange, onAddPhotos, onAnnotate, onFlagToggle, onRemovePhoto, onCaptionChange, readOnly }) {
+function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackChange, onNotesChange, onAddPhotos, onAnnotate, onSetFlag, onRemovePhoto, onCaptionChange, readOnly }) {
   const Icon = category.icon;
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
@@ -547,22 +581,44 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
 
       {expanded && (
         <div className="border-t border-slate-100 px-4 py-3 space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            {RATINGS.map((r) => (
-              <button
-                key={r}
-                onClick={() => onRate(r)}
-                disabled={readOnly}
-                className={`text-sm py-2 rounded-lg border transition-colors ${
-                  entry.rating === r ? RATING_PILL_ACTIVE[r] : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                } ${readOnly ? 'opacity-60 cursor-default' : ''}`}
-              >
-                {r}
-              </button>
-            ))}
-          </div>
+          {category.type === 'yesno' ? (
+            <>
+              <p className="text-sm text-slate-700">{category.question}</p>
+              <div className="grid grid-cols-2 gap-2">
+                {['No', 'Yes'].map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => onRate(r)}
+                    disabled={readOnly}
+                    className={`text-sm py-2 rounded-lg border transition-colors ${
+                      entry.rating === r
+                        ? 'border-slate-400 bg-slate-100 text-slate-800 font-medium'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    } ${readOnly ? 'opacity-60 cursor-default' : ''}`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {RATINGS.map((r) => (
+                <button
+                  key={r}
+                  onClick={() => onRate(r)}
+                  disabled={readOnly}
+                  className={`text-sm py-2 rounded-lg border transition-colors ${
+                    entry.rating === r ? RATING_PILL_ACTIVE[r] : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                  } ${readOnly ? 'opacity-60 cursor-default' : ''}`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          )}
 
-          {entry.rating && (
+          {entry.rating && (category.type !== 'yesno' || entry.rating === 'Yes') && (
             <div>
               <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1">
                 Auto-generated feedback
@@ -577,83 +633,88 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
             </div>
           )}
 
-          <div>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1">
-              Additional notes
-            </p>
-            <textarea
-              value={entry.notes}
-              onChange={(e) => onNotesChange(e.target.value)}
-              rows={2}
-              placeholder="Add site-specific observations..."
-              readOnly={readOnly}
-              className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400"
-            />
-          </div>
+          {(category.type !== 'yesno' || entry.rating === 'Yes') && (
+            <>
+              <div>
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1">
+                  {category.type === 'yesno' ? 'Hazard details' : 'Additional notes'}
+                </p>
+                <textarea
+                  value={entry.notes}
+                  onChange={(e) => onNotesChange(e.target.value)}
+                  rows={2}
+                  placeholder={category.type === 'yesno' ? 'Describe the hazard...' : 'Add site-specific observations...'}
+                  readOnly={readOnly}
+                  className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400"
+                />
+              </div>
 
-          <div>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Photos</p>
-            <div className="flex flex-col gap-3">
-              {entry.photos.map((photo) => (
-                <div key={photo.id} className="flex gap-3">
-                  <PhotoThumb
-                    photo={photo}
-                    onAnnotate={() => onAnnotate(photo)}
-                    onFlag={() => onFlagToggle(photo.id)}
-                    onRemove={() => onRemovePhoto(photo.id)}
-                    readOnly={readOnly}
+              <div>
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Photos</p>
+                <div className="flex flex-col gap-3">
+                  {entry.photos.map((photo) => (
+                    <div key={photo.id} className="flex gap-3">
+                      <PhotoThumb
+                        photo={photo}
+                        onAnnotate={() => onAnnotate(photo)}
+                        onFlagIssue={() => onSetFlag(photo.id, 'issue')}
+                        onFlagGood={() => onSetFlag(photo.id, 'good')}
+                        onRemove={() => onRemovePhoto(photo.id)}
+                        readOnly={readOnly}
+                      />
+                      <input
+                        type="text"
+                        value={photo.caption || ''}
+                        onChange={(e) => onCaptionChange(photo.id, e.target.value)}
+                        placeholder="Caption (optional)"
+                        readOnly={readOnly}
+                        className="flex-1 self-start text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
+                      />
+                    </div>
+                  ))}
+                  {!readOnly && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => cameraInputRef.current.click()}
+                        className="flex-1 flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
+                      >
+                        <Camera size={16} /> Take photo
+                      </button>
+                      <button
+                        onClick={() => galleryInputRef.current.click()}
+                        className="flex-1 flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
+                      >
+                        <ImageIcon size={16} /> Upload
+                      </button>
+                    </div>
+                  )}
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      onAddPhotos(e.target.files);
+                      e.target.value = '';
+                    }}
                   />
                   <input
-                    type="text"
-                    value={photo.caption || ''}
-                    onChange={(e) => onCaptionChange(photo.id, e.target.value)}
-                    placeholder="Caption (optional)"
-                    readOnly={readOnly}
-                    className="flex-1 self-start text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
+                    ref={galleryInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      onAddPhotos(e.target.files);
+                      e.target.value = '';
+                    }}
                   />
                 </div>
-              ))}
-              {!readOnly && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => cameraInputRef.current.click()}
-                    className="flex-1 flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
-                  >
-                    <Camera size={16} /> Take photo
-                  </button>
-                  <button
-                    onClick={() => galleryInputRef.current.click()}
-                    className="flex-1 flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
-                  >
-                    <ImageIcon size={16} /> Upload
-                  </button>
-                </div>
-              )}
-              <input
-                ref={cameraInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                capture="environment"
-                className="hidden"
-                onChange={(e) => {
-                  onAddPhotos(e.target.files);
-                  e.target.value = '';
-                }}
-              />
-              <input
-                ref={galleryInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  onAddPhotos(e.target.files);
-                  e.target.value = '';
-                }}
-              />
-            </div>
-          </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -664,7 +725,7 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
    Replacements card
 --------------------------------------------------------------- */
 
-function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onNotesChange, onAddPhotos, onAnnotate, onFlagToggle, onRemovePhoto, onCaptionChange, readOnly }) {
+function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onNotesChange, onAddPhotos, onAnnotate, onSetFlag, onRemovePhoto, onCaptionChange, readOnly }) {
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
 
@@ -755,7 +816,8 @@ function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onN
                   <PhotoThumb
                     photo={photo}
                     onAnnotate={() => onAnnotate(photo)}
-                    onFlag={() => onFlagToggle(photo.id)}
+                    onFlagIssue={() => onSetFlag(photo.id, 'issue')}
+                    onFlagGood={() => onSetFlag(photo.id, 'good')}
                     onRemove={() => onRemovePhoto(photo.id)}
                     readOnly={readOnly}
                   />
@@ -831,6 +893,8 @@ const PDF_COLORS = {
   Fair: [217, 119, 6],
   'Below standard': [220, 38, 38],
   'Not assessed': [148, 163, 184],
+  Yes: [100, 116, 139],
+  No: [100, 116, 139],
 };
 
 async function exportQAPdf(record) {
@@ -1025,18 +1089,14 @@ async function exportQAPdf(record) {
     CATEGORIES.forEach((c) => {
       const entry = zone.categories[c.id];
       entry.photos.forEach((p) => {
-        if (!(p.flagged || p.annotatedSrc)) return;
-        const target = entry.rating === 'Fair' || entry.rating === 'Below standard'
-          ? issuePhotoEntries
-          : goodPracticeEntries;
-        target.push({ category: c.label, photo: p });
+        if (p.flagType === 'issue') issuePhotoEntries.push({ category: c.label, photo: p });
+        else if (p.flagType === 'good') goodPracticeEntries.push({ category: c.label, photo: p });
       });
     });
     if (zone.replacements) {
       zone.replacements.photos.forEach((p) => {
-        if (p.flagged || p.annotatedSrc) {
-          issuePhotoEntries.push({ category: 'Replacements', photo: p });
-        }
+        if (p.flagType === 'issue') issuePhotoEntries.push({ category: 'Replacements', photo: p });
+        else if (p.flagType === 'good') goodPracticeEntries.push({ category: 'Replacements', photo: p });
       });
     }
 
@@ -1435,7 +1495,7 @@ function QAFlow({ record, onChange, onClose }) {
         const { src, width, height } = await readFileAsImage(file);
         newPhotos.push({
           id: `photo-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          src, width, height, flagged: false, annotatedSrc: null, caption: '',
+          src, width, height, flagType: null, annotatedSrc: null, caption: '',
         });
       } catch (e) {
         // ignore failed reads
@@ -1454,30 +1514,30 @@ function QAFlow({ record, onChange, onClose }) {
     const zone = record.zones[zoneIdx];
     if (catId === '_replacements') {
       const photos = zone.replacements.photos.map((p) =>
-        p.id === photoId ? { ...p, annotatedSrc: dataUrl, flagged: true } : p
+        p.id === photoId ? { ...p, annotatedSrc: dataUrl, flagType: p.flagType || 'issue' } : p
       );
       updateReplacements(zoneIdx, { photos });
       setAnnotating(null);
       return;
     }
     const photos = zone.categories[catId].photos.map((p) =>
-      p.id === photoId ? { ...p, annotatedSrc: dataUrl, flagged: true } : p
+      p.id === photoId ? { ...p, annotatedSrc: dataUrl, flagType: p.flagType || 'issue' } : p
     );
     updateCategory(zoneIdx, catId, { photos });
     setAnnotating(null);
   };
 
-  const toggleFlag = (zoneIdx, catId, photoId) => {
+  const setFlag = (zoneIdx, catId, photoId, flagType) => {
     const zone = record.zones[zoneIdx];
     if (catId === '_replacements') {
       const photos = zone.replacements.photos.map((p) =>
-        p.id === photoId ? { ...p, flagged: !p.flagged } : p
+        p.id === photoId ? { ...p, flagType: p.flagType === flagType ? null : flagType } : p
       );
       updateReplacements(zoneIdx, { photos });
       return;
     }
     const photos = zone.categories[catId].photos.map((p) =>
-      p.id === photoId ? { ...p, flagged: !p.flagged } : p
+      p.id === photoId ? { ...p, flagType: p.flagType === flagType ? null : flagType } : p
     );
     updateCategory(zoneIdx, catId, { photos });
   };
@@ -1736,7 +1796,7 @@ function QAFlow({ record, onChange, onClose }) {
                   onNotesChange={(val) => updateCategory(currentZoneIdx, c.id, { notes: val })}
                   onAddPhotos={(files) => handleAddPhotos(currentZoneIdx, c.id, files)}
                   onAnnotate={(photo) => setAnnotating({ catId: c.id, photo })}
-                  onFlagToggle={(photoId) => toggleFlag(currentZoneIdx, c.id, photoId)}
+                  onSetFlag={(photoId, flagType) => setFlag(currentZoneIdx, c.id, photoId, flagType)}
                   onRemovePhoto={(photoId) => removePhoto(currentZoneIdx, c.id, photoId)}
                   onCaptionChange={(photoId, caption) => setCaption(currentZoneIdx, c.id, photoId, caption)}
                   readOnly={readOnly}
@@ -1751,7 +1811,7 @@ function QAFlow({ record, onChange, onClose }) {
               onNotesChange={(val) => updateReplacements(currentZoneIdx, { notes: val })}
               onAddPhotos={(files) => handleAddPhotos(currentZoneIdx, '_replacements', files)}
               onAnnotate={(photo) => setAnnotating({ catId: '_replacements', photo })}
-              onFlagToggle={(photoId) => toggleFlag(currentZoneIdx, '_replacements', photoId)}
+              onSetFlag={(photoId, flagType) => setFlag(currentZoneIdx, '_replacements', photoId, flagType)}
               onRemovePhoto={(photoId) => removePhoto(currentZoneIdx, '_replacements', photoId)}
               onCaptionChange={(photoId, caption) => setCaption(currentZoneIdx, '_replacements', photoId, caption)}
               readOnly={readOnly}
@@ -2123,13 +2183,38 @@ export default function HortiCheckApp() {
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState({ screen: 'dashboard' }); // { screen: 'dashboard' } | { screen: 'qa', id } | { screen: 'stub', module }
 
+  // Migrates a single photo object from the old boolean `flagged` field
+  // (pre-dating separate issue/good-practice flags) to the new `flagType`.
+  const migratePhoto = (p) => {
+    if (p.flagType !== undefined) return p;
+    const { flagged, ...rest } = p;
+    return { ...rest, flagType: flagged ? 'issue' : null };
+  };
+
+  const migrateRecord = (r) => ({
+    actionPoints: [],
+    ...r,
+    zones: (r.zones || []).map((z) => ({
+      ...z,
+      categories: Object.fromEntries(
+        Object.entries(z.categories || {}).map(([key, entry]) => [
+          key,
+          { ...entry, photos: (entry.photos || []).map(migratePhoto) },
+        ])
+      ),
+      replacements: z.replacements
+        ? { ...z.replacements, photos: (z.replacements.photos || []).map(migratePhoto) }
+        : z.replacements,
+    })),
+  });
+
   // Load saved records from IndexedDB on first mount.
   useEffect(() => {
     let cancelled = false;
     loadRecords().then((saved) => {
       if (cancelled) return;
       if (saved && Array.isArray(saved) && saved.length > 0) {
-        setRecords(saved.map((r) => ({ actionPoints: [], ...r })));
+        setRecords(saved.map(migrateRecord));
       } else {
         // First run / nothing saved yet — seed with a sample record.
         const sample = newQARecord({
