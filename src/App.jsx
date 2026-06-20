@@ -323,7 +323,8 @@ function zoneProgress(zone) {
   return done;
 }
 
-// Reads an image file and re-encodes it via canvas as a JPEG data URL.
+// Reads an image file and re-encodes it via canvas as a JPEG data URL,
+// downscaling to a max dimension to keep memory and storage use reasonable.
 //
 // Modern browsers already decode <img>/createImageBitmap with EXIF
 // orientation applied automatically — img.width/height and the pixels drawn
@@ -331,21 +332,30 @@ function zoneProgress(zone) {
 // simply strips the EXIF block, which avoids jsPDF (which does NOT honour
 // EXIF orientation when embedding images) re-applying a rotation that the
 // browser has already accounted for.
+const MAX_PHOTO_DIMENSION = 1600;
+const PHOTO_JPEG_QUALITY = 0.8;
+
 function readFileAsImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
+        let { width, height } = img;
+        if (width > MAX_PHOTO_DIMENSION || height > MAX_PHOTO_DIMENSION) {
+          const scale = MAX_PHOTO_DIMENSION / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
         const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
+        canvas.width = width;
+        canvas.height = height;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
+        ctx.drawImage(img, 0, 0, width, height);
         resolve({
-          src: canvas.toDataURL('image/jpeg', 0.9),
-          width: img.width,
-          height: img.height,
+          src: canvas.toDataURL('image/jpeg', PHOTO_JPEG_QUALITY),
+          width,
+          height,
         });
       };
       img.onerror = reject;
@@ -1199,7 +1209,7 @@ async function exportQAPdf(record) {
    Dashboard
 --------------------------------------------------------------- */
 
-function Dashboard({ records, onNewQA, onOpenRecord, onOpenModuleStub }) {
+function Dashboard({ records, onNewQA, onOpenRecord, onOpenModuleStub, onDeleteRecord }) {
   const [view, setView] = useState('list'); // list | calendar
 
   const scheduled = records.filter((r) => r.status === 'scheduled');
@@ -1354,28 +1364,39 @@ function Dashboard({ records, onNewQA, onOpenRecord, onOpenModuleStub }) {
                 const counts = ratingCounts({ categories: {} });
                 const issues = r.zones.reduce((acc, z) => acc + ratingCounts(z)['Below standard'] + ratingCounts(z).Fair, 0);
                 return (
-                  <button
+                  <div
                     key={r.id}
-                    onClick={() => onOpenRecord(r.id)}
                     className="w-full bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between text-left"
                   >
-                    <div className="flex items-center gap-3">
+                    <button onClick={() => onOpenRecord(r.id)} className="flex items-center gap-3 text-left flex-1 min-w-0">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: mod.bg, color: mod.text }}>
                         <Icon size={14} />
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-slate-800">{r.siteInfo.site || 'Untitled site'}</p>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{r.siteInfo.site || 'Untitled site'}</p>
                         <p className="text-xs text-slate-400 mt-0.5">
                           {mod.label} &middot; {r.zones.length} zone{r.zones.length === 1 ? '' : 's'}
                           {issues > 0 ? ` \u00b7 ${issues} issue${issues === 1 ? '' : 's'} flagged` : ''}
                         </p>
                       </div>
+                    </button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button onClick={() => onOpenRecord(r.id)} className="text-right">
+                        <StatusPill status={r.status} />
+                        <p className="text-xs text-slate-400 mt-1">{relativeDate(r.siteInfo.date)}</p>
+                      </button>
+                      {r.status === 'completed' && (
+                        <button
+                          onClick={() => onDeleteRecord(r.id, r.siteInfo.site || 'Untitled site')}
+                          aria-label="Delete assessment"
+                          title="Delete assessment"
+                          className="w-7 h-7 flex items-center justify-center rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 flex-shrink-0"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
-                    <div className="text-right">
-                      <StatusPill status={r.status} />
-                      <p className="text-xs text-slate-400 mt-1">{relativeDate(r.siteInfo.date)}</p>
-                    </div>
-                  </button>
+                  </div>
                 );
               })}
             </>
@@ -1741,13 +1762,14 @@ function QAFlow({ record, onChange, onClose }) {
           <button
             disabled={record.zones.length === 0}
             onClick={() => {
-              setCurrentZoneIdx(0);
+              const firstIncomplete = record.zones.findIndex((z) => zoneProgress(z) < CATEGORIES.length);
+              setCurrentZoneIdx(firstIncomplete === -1 ? 0 : firstIncomplete);
               setScreen('assess');
               if (record.status === 'scheduled') update({ status: 'in_progress' });
             }}
             className="w-full py-2.5 rounded-lg bg-teal-600 text-white text-sm font-medium disabled:bg-slate-200 disabled:text-slate-400"
           >
-            Start assessment
+            {record.status === 'scheduled' ? 'Start assessment' : 'Return to assessment'}
           </button>
         </div>
       )}
@@ -1796,6 +1818,13 @@ function QAFlow({ record, onChange, onClose }) {
                   <Plus size={15} />
                 </button>
               )}
+              <button
+                onClick={() => setScreen('report')}
+                className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-600 hover:bg-slate-50"
+                title="Jump to report overview"
+              >
+                <ClipboardList size={13} /> Report
+              </button>
             </div>
 
             <div className="h-1 bg-slate-100 rounded-full overflow-hidden mb-3">
@@ -2316,6 +2345,11 @@ export default function HortiCheckApp() {
     setRecords((prev) => prev.map((r) => (r.id === id ? updated : r)));
   };
 
+  const deleteRecord = (id, siteName) => {
+    if (!window.confirm(`Delete the completed assessment for "${siteName}"? This can't be undone.`)) return;
+    setRecords((prev) => prev.filter((r) => r.id !== id));
+  };
+
   if (!loaded) {
     return (
       <div className="min-h-screen bg-[#F1EFE8] font-sans flex items-center justify-center">
@@ -2332,6 +2366,7 @@ export default function HortiCheckApp() {
           onNewQA={newQA}
           onOpenRecord={openRecord}
           onOpenModuleStub={(key) => setView({ screen: 'stub', module: key })}
+          onDeleteRecord={deleteRecord}
         />
       )}
       {view.screen === 'qa' && (
