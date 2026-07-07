@@ -807,10 +807,12 @@ function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onN
                 </button>
               )}
               <input
+                key={replacements.count}
                 type="number"
                 min="0"
-                value={replacements.count}
-                onChange={(e) => onCountChange(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                defaultValue={replacements.count}
+                onFocus={(e) => e.target.select()}
+                onBlur={(e) => onCountChange(Math.max(0, parseInt(e.target.value, 10) || 0))}
                 readOnly={readOnly}
                 className="flex-1 text-sm text-center text-slate-700 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-teal-400"
               />
