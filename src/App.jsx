@@ -418,6 +418,7 @@ function newSAZone(name) {
     notes: '',
     notePhotos: [],
     zonePhotos: [],
+    summary: '',
   };
 }
 
@@ -2368,13 +2369,22 @@ async function exportSAPdf(record) {
       doc.text(String(val), pageW - margin, y, { align: 'right' });
       y += 7;
     });
-    if (zone.notes) {
+    if (zone.notes || zone.summary) {
       y += 4;
       doc.setDrawColor(220, 220, 220); doc.line(margin, y, pageW - margin, y); y += 6;
-      doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
-      doc.text('Notes', margin, y); y += 6;
-      doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
-      drawWrappedText(zone.notes, siteInfo.site || '');
+      if (zone.summary) {
+        doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
+        doc.text('Summary', margin, y); y += 6;
+        doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
+        drawWrappedText(zone.summary, siteInfo.site || '');
+        y += 4;
+      }
+      if (zone.notes) {
+        doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
+        doc.text('Notes', margin, y); y += 6;
+        doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
+        drawWrappedText(zone.notes, siteInfo.site || '');
+      }
     }
     [{ label: 'Zone photos', photos: zone.zonePhotos || [] },
      { label: 'Pest photos', photos: zone.pestPhotos || [] },
@@ -2407,6 +2417,41 @@ async function exportSAPdf(record) {
 /* ---------------------------------------------------------------
    SA — Simple photo row (no flagging needed)
 --------------------------------------------------------------- */
+
+function generateSASummary(zone) {
+  const parts = [];
+
+  // Plants and containers
+  const plants = parseInt(zone.plants, 10);
+  const containers = parseInt(zone.containers, 10);
+  if (!isNaN(plants) && !isNaN(containers) && plants > 0 && containers > 0) {
+    parts.push(`This zone contains ${plants} plant${plants === 1 ? '' : 's'} across ${containers} container${containers === 1 ? '' : 's'}.`);
+  } else if (!isNaN(plants) && plants > 0) {
+    parts.push(`This zone contains ${plants} plant${plants === 1 ? '' : 's'}.`);
+  } else if (!isNaN(containers) && containers > 0) {
+    parts.push(`This zone contains ${containers} container${containers === 1 ? '' : 's'}.`);
+  }
+
+  // Pests
+  if (zone.pests === 'No') {
+    parts.push('No signs of pest activity were identified.');
+  } else if (zone.pests === 'Yes') {
+    parts.push('Signs of pest activity were identified and have been recorded.');
+  }
+
+  // Replacements
+  const replacements = parseInt(zone.replacements, 10);
+  if (!isNaN(replacements) && replacements > 0) {
+    parts.push(`${replacements} plant${replacements === 1 ? '' : 's'} ${replacements === 1 ? 'has' : 'have'} been identified as requiring replacement.`);
+  }
+
+  // Notes
+  if (zone.notes && zone.notes.trim()) {
+    parts.push(zone.notes.trim());
+  }
+
+  return parts.join(' ');
+}
 
 function SAPhotoRow({ photos, onAdd, onAnnotate, onRemove, onCaptionChange, readOnly }) {
   const cameraRef = useRef(null);
@@ -2461,6 +2506,8 @@ function SAFlow({ record, onChange, onClose }) {
   const [addingZone, setAddingZone] = useState(false);
   const [pendingZoneName, setPendingZoneName] = useState('');
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [expandedSection, setExpandedSection] = useState(null);
+  const toggleSection = (key) => setExpandedSection((prev) => prev === key ? null : key);
 
   const readOnly = record.status === 'completed';
   const currentZone = record.zones[currentZoneIdx];
@@ -2617,7 +2664,7 @@ function SAFlow({ record, onChange, onClose }) {
                 {record.zones.map((z, idx) => (
                   <button
                     key={z.id}
-                    onClick={() => setCurrentZoneIdx(idx)}
+                    onClick={() => { setCurrentZoneIdx(idx); setExpandedSection(null); }}
                     style={idx === currentZoneIdx ? { background: ACCENT, borderColor: ACCENT } : {}}
                     className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-xs border ${idx === currentZoneIdx ? 'text-white' : 'bg-white text-slate-500 border-slate-200'}`}
                   >
@@ -2643,90 +2690,178 @@ function SAFlow({ record, onChange, onClose }) {
             )}
           </div>
 
-          <div className="px-4 space-y-3">
+          <div className="px-4 space-y-2">
+
             {/* Plants */}
-            <div className="bg-white border border-slate-200 rounded-xl p-3">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Number of plants</p>
-              <input key={`pl-${currentZoneIdx}-${currentZone.plants}`} type="number" min="0"
-                defaultValue={currentZone.plants || ''} onFocus={(e) => e.target.select()}
-                onBlur={(e) => updateZoneField(currentZoneIdx, 'plants', e.target.value)}
-                readOnly={readOnly} placeholder="0"
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <button onClick={() => toggleSection('plants')} className="w-full flex items-center justify-between px-4 py-3 text-left">
+                <span className="text-sm font-medium text-slate-800">Number of plants</span>
+                <span className="flex items-center gap-2">
+                  {currentZone.plants && <span className="text-xs font-semibold text-blue-700">{currentZone.plants}</span>}
+                  {expandedSection === 'plants' ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                </span>
+              </button>
+              {expandedSection === 'plants' && (
+                <div className="border-t border-slate-100 px-4 py-3">
+                  <input key={`pl-${currentZoneIdx}-${currentZone.plants}`} type="number" min="0"
+                    defaultValue={currentZone.plants || ''} onFocus={(e) => e.target.select()}
+                    onBlur={(e) => updateZoneField(currentZoneIdx, 'plants', e.target.value)}
+                    readOnly={readOnly} placeholder="0"
+                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                </div>
+              )}
             </div>
 
             {/* Containers */}
-            <div className="bg-white border border-slate-200 rounded-xl p-3">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Number of containers</p>
-              <input key={`co-${currentZoneIdx}-${currentZone.containers}`} type="number" min="0"
-                defaultValue={currentZone.containers || ''} onFocus={(e) => e.target.select()}
-                onBlur={(e) => updateZoneField(currentZoneIdx, 'containers', e.target.value)}
-                readOnly={readOnly} placeholder="0"
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <button onClick={() => toggleSection('containers')} className="w-full flex items-center justify-between px-4 py-3 text-left">
+                <span className="text-sm font-medium text-slate-800">Number of containers</span>
+                <span className="flex items-center gap-2">
+                  {currentZone.containers && <span className="text-xs font-semibold text-blue-700">{currentZone.containers}</span>}
+                  {expandedSection === 'containers' ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                </span>
+              </button>
+              {expandedSection === 'containers' && (
+                <div className="border-t border-slate-100 px-4 py-3">
+                  <input key={`co-${currentZoneIdx}-${currentZone.containers}`} type="number" min="0"
+                    defaultValue={currentZone.containers || ''} onFocus={(e) => e.target.select()}
+                    onBlur={(e) => updateZoneField(currentZoneIdx, 'containers', e.target.value)}
+                    readOnly={readOnly} placeholder="0"
+                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                </div>
+              )}
             </div>
 
             {/* Pests */}
-            <div className="bg-white border border-slate-200 rounded-xl p-3">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Signs of pests</p>
-              <div className="grid grid-cols-2 gap-2">
-                {['No', 'Yes'].map((v) => (
-                  <button key={v} disabled={readOnly}
-                    onClick={() => updateZoneField(currentZoneIdx, 'pests', currentZone.pests === v ? null : v)}
-                    style={currentZone.pests === v ? { background: ACCENT, borderColor: ACCENT } : {}}
-                    className={`py-2 rounded-lg text-sm border transition-colors ${currentZone.pests === v ? 'text-white font-medium' : 'border-slate-200 text-slate-600'}`}>
-                    {v}
-                  </button>
-                ))}
-              </div>
-              {currentZone.pests === 'Yes' && (
-                <SAPhotoRow photos={currentZone.pestPhotos || []}
-                  onAdd={(files) => addPhoto(currentZoneIdx, 'pestPhotos', files)}
-                  onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'pestPhotos', photo })}
-                  onRemove={(id) => removePhoto(currentZoneIdx, 'pestPhotos', id)}
-                  onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'pestPhotos', id, cap)}
-                  readOnly={readOnly} />
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <button onClick={() => toggleSection('pests')} className="w-full flex items-center justify-between px-4 py-3 text-left">
+                <span className="text-sm font-medium text-slate-800">Signs of pests</span>
+                <span className="flex items-center gap-2">
+                  {currentZone.pests && <span className={`text-xs font-semibold ${currentZone.pests === 'Yes' ? 'text-red-600' : 'text-green-600'}`}>{currentZone.pests}</span>}
+                  {(currentZone.pestPhotos || []).length > 0 && <span className="text-xs text-slate-400 flex items-center gap-0.5"><Camera size={11} /> {currentZone.pestPhotos.length}</span>}
+                  {expandedSection === 'pests' ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                </span>
+              </button>
+              {expandedSection === 'pests' && (
+                <div className="border-t border-slate-100 px-4 py-3 space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    {['No', 'Yes'].map((v) => (
+                      <button key={v} disabled={readOnly}
+                        onClick={() => updateZoneField(currentZoneIdx, 'pests', currentZone.pests === v ? null : v)}
+                        style={currentZone.pests === v ? { background: ACCENT, borderColor: ACCENT } : {}}
+                        className={`py-2 rounded-lg text-sm border transition-colors ${currentZone.pests === v ? 'text-white font-medium' : 'border-slate-200 text-slate-600'}`}>
+                        {v}
+                      </button>
+                    ))}
+                  </div>
+                  {currentZone.pests === 'Yes' && (
+                    <SAPhotoRow photos={currentZone.pestPhotos || []}
+                      onAdd={(files) => addPhoto(currentZoneIdx, 'pestPhotos', files)}
+                      onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'pestPhotos', photo })}
+                      onRemove={(id) => removePhoto(currentZoneIdx, 'pestPhotos', id)}
+                      onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'pestPhotos', id, cap)}
+                      readOnly={readOnly} />
+                  )}
+                </div>
               )}
             </div>
 
             {/* Replacements */}
-            <div className="bg-white border border-slate-200 rounded-xl p-3">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Replacements required</p>
-              <input key={`re-${currentZoneIdx}-${currentZone.replacements}`} type="number" min="0"
-                defaultValue={currentZone.replacements || ''} onFocus={(e) => e.target.select()}
-                onBlur={(e) => updateZoneField(currentZoneIdx, 'replacements', e.target.value)}
-                readOnly={readOnly} placeholder="0"
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mb-1 focus:outline-none focus:ring-1 focus:ring-blue-400" />
-              <SAPhotoRow photos={currentZone.replacementPhotos || []}
-                onAdd={(files) => addPhoto(currentZoneIdx, 'replacementPhotos', files)}
-                onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'replacementPhotos', photo })}
-                onRemove={(id) => removePhoto(currentZoneIdx, 'replacementPhotos', id)}
-                onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'replacementPhotos', id, cap)}
-                readOnly={readOnly} />
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <button onClick={() => toggleSection('replacements')} className="w-full flex items-center justify-between px-4 py-3 text-left">
+                <span className="text-sm font-medium text-slate-800">Replacements required</span>
+                <span className="flex items-center gap-2">
+                  {currentZone.replacements && <span className="text-xs font-semibold text-blue-700">{currentZone.replacements}</span>}
+                  {(currentZone.replacementPhotos || []).length > 0 && <span className="text-xs text-slate-400 flex items-center gap-0.5"><Camera size={11} /> {currentZone.replacementPhotos.length}</span>}
+                  {expandedSection === 'replacements' ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                </span>
+              </button>
+              {expandedSection === 'replacements' && (
+                <div className="border-t border-slate-100 px-4 py-3 space-y-2">
+                  <input key={`re-${currentZoneIdx}-${currentZone.replacements}`} type="number" min="0"
+                    defaultValue={currentZone.replacements || ''} onFocus={(e) => e.target.select()}
+                    onBlur={(e) => updateZoneField(currentZoneIdx, 'replacements', e.target.value)}
+                    readOnly={readOnly} placeholder="0"
+                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  <SAPhotoRow photos={currentZone.replacementPhotos || []}
+                    onAdd={(files) => addPhoto(currentZoneIdx, 'replacementPhotos', files)}
+                    onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'replacementPhotos', photo })}
+                    onRemove={(id) => removePhoto(currentZoneIdx, 'replacementPhotos', id)}
+                    onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'replacementPhotos', id, cap)}
+                    readOnly={readOnly} />
+                </div>
+              )}
             </div>
 
             {/* Notes */}
-            <div className="bg-white border border-slate-200 rounded-xl p-3">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Notes</p>
-              <textarea key={`no-${currentZoneIdx}-${currentZone.notes}`}
-                defaultValue={currentZone.notes || ''} onBlur={(e) => updateZoneField(currentZoneIdx, 'notes', e.target.value)}
-                rows={3} readOnly={readOnly} placeholder="Any additional observations for this zone..."
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 mb-1" />
-              <SAPhotoRow photos={currentZone.notePhotos || []}
-                onAdd={(files) => addPhoto(currentZoneIdx, 'notePhotos', files)}
-                onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'notePhotos', photo })}
-                onRemove={(id) => removePhoto(currentZoneIdx, 'notePhotos', id)}
-                onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'notePhotos', id, cap)}
-                readOnly={readOnly} />
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <button onClick={() => toggleSection('notes')} className="w-full flex items-center justify-between px-4 py-3 text-left">
+                <span className="text-sm font-medium text-slate-800">Notes</span>
+                <span className="flex items-center gap-2">
+                  {currentZone.notes && <span className="text-xs text-slate-400 truncate max-w-[100px]">{currentZone.notes.slice(0, 20)}{currentZone.notes.length > 20 ? '…' : ''}</span>}
+                  {(currentZone.notePhotos || []).length > 0 && <span className="text-xs text-slate-400 flex items-center gap-0.5"><Camera size={11} /> {currentZone.notePhotos.length}</span>}
+                  {expandedSection === 'notes' ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                </span>
+              </button>
+              {expandedSection === 'notes' && (
+                <div className="border-t border-slate-100 px-4 py-3 space-y-2">
+                  <textarea key={`no-${currentZoneIdx}-${currentZone.notes}`}
+                    defaultValue={currentZone.notes || ''} onBlur={(e) => updateZoneField(currentZoneIdx, 'notes', e.target.value)}
+                    rows={3} readOnly={readOnly} placeholder="Any additional observations for this zone..."
+                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  <SAPhotoRow photos={currentZone.notePhotos || []}
+                    onAdd={(files) => addPhoto(currentZoneIdx, 'notePhotos', files)}
+                    onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'notePhotos', photo })}
+                    onRemove={(id) => removePhoto(currentZoneIdx, 'notePhotos', id)}
+                    onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'notePhotos', id, cap)}
+                    readOnly={readOnly} />
+                </div>
+              )}
             </div>
 
+            {/* Zone photos */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <button onClick={() => toggleSection('zonePhotos')} className="w-full flex items-center justify-between px-4 py-3 text-left">
+                <span className="text-sm font-medium text-slate-800">Zone photos</span>
+                <span className="flex items-center gap-2">
+                  {(currentZone.zonePhotos || []).length > 0 && <span className="text-xs text-slate-400 flex items-center gap-0.5"><Camera size={11} /> {currentZone.zonePhotos.length}</span>}
+                  {expandedSection === 'zonePhotos' ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                </span>
+              </button>
+              {expandedSection === 'zonePhotos' && (
+                <div className="border-t border-slate-100 px-4 py-3">
+                  <p className="text-xs text-slate-400 mb-2">General visual record — all included in the PDF report.</p>
+                  <SAPhotoRow photos={currentZone.zonePhotos || []}
+                    onAdd={(files) => addPhoto(currentZoneIdx, 'zonePhotos', files)}
+                    onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'zonePhotos', photo })}
+                    onRemove={(id) => removePhoto(currentZoneIdx, 'zonePhotos', id)}
+                    onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'zonePhotos', id, cap)}
+                    readOnly={readOnly} />
+                </div>
+              )}
+            </div>
+
+            {/* Zone summary */}
             <div className="bg-white border border-slate-200 rounded-xl p-3">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Zone photos</p>
-              <p className="text-xs text-slate-400 mb-2">General visual record of this zone — all included in the PDF report.</p>
-              <SAPhotoRow photos={currentZone.zonePhotos || []}
-                onAdd={(files) => addPhoto(currentZoneIdx, 'zonePhotos', files)}
-                onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'zonePhotos', photo })}
-                onRemove={(id) => removePhoto(currentZoneIdx, 'zonePhotos', id)}
-                onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'zonePhotos', id, cap)}
-                readOnly={readOnly} />
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">Zone summary</p>
+                {!readOnly && (
+                  <button
+                    onClick={() => updateZoneField(currentZoneIdx, 'summary', generateSASummary(currentZone))}
+                    className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
+                  >
+                    <RefreshCw size={11} /> Generate
+                  </button>
+                )}
+              </div>
+              <textarea
+                key={`sum-${currentZoneIdx}-${currentZone.summary}`}
+                defaultValue={currentZone.summary || ''}
+                onBlur={(e) => updateZoneField(currentZoneIdx, 'summary', e.target.value)}
+                rows={4} readOnly={readOnly}
+                placeholder="Tap 'Generate' to create a summary from the data above, or type your own..."
+                className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 leading-relaxed"
+              />
             </div>
 
             <div className="flex gap-2 pt-2 pb-4">
