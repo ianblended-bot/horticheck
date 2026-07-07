@@ -498,6 +498,31 @@ function AnnotatorModal({ photo, onSave, onClose }) {
   );
 }
 
+// Controlled caption input with local state so typing doesn't trigger
+// expensive parent re-renders on every keystroke — commits on blur.
+function CaptionInput({ value, onChange, readOnly }) {
+  const [local, setLocal] = useState(value || '');
+  // Sync if parent resets caption (e.g. record loaded from storage).
+  const prevRef = useRef(value);
+  useEffect(() => {
+    if (value !== prevRef.current) {
+      setLocal(value || '');
+      prevRef.current = value;
+    }
+  }, [value]);
+  return (
+    <input
+      type="text"
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => onChange(local)}
+      placeholder="Caption (optional)"
+      readOnly={readOnly}
+      className="flex-1 self-start text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
+    />
+  );
+}
+
 function PhotoThumb({ photo, onAnnotate, onFlagIssue, onFlagGood, onRemove, readOnly }) {
   const flagType = photo.flagType || null;
   return (
@@ -567,6 +592,30 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
   const Icon = category.icon;
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
+
+  // Local state for text fields — decouples typing from parent re-renders.
+  // Changes are committed on blur rather than on every keystroke.
+  const [localFeedback, setLocalFeedback] = useState(entry.feedback || '');
+  const [localNotes, setLocalNotes] = useState(entry.notes || '');
+
+  // Sync from parent when rating changes (auto-generated feedback text updates),
+  // or when the card is collapsed/expanded.
+  const prevRatingRef = useRef(entry.rating);
+  useEffect(() => {
+    if (entry.rating !== prevRatingRef.current) {
+      setLocalFeedback(entry.feedback || '');
+      prevRatingRef.current = entry.rating;
+    }
+  }, [entry.rating, entry.feedback]);
+
+  // Also sync if feedback is externally reset (e.g. regenerate).
+  const prevFeedbackRef = useRef(entry.feedback);
+  useEffect(() => {
+    if (entry.feedback !== prevFeedbackRef.current) {
+      setLocalFeedback(entry.feedback || '');
+      prevFeedbackRef.current = entry.feedback;
+    }
+  }, [entry.feedback]);
 
   return (
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
@@ -642,8 +691,9 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
                 Auto-generated feedback
               </p>
               <textarea
-                value={entry.feedback}
-                onChange={(e) => onFeedbackChange(e.target.value)}
+                value={localFeedback}
+                onChange={(e) => setLocalFeedback(e.target.value)}
+                onBlur={() => onFeedbackChange(localFeedback)}
                 rows={3}
                 readOnly={readOnly}
                 className="w-full text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400"
@@ -658,8 +708,9 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
                   {category.type === 'yesno' ? 'Hazard details' : 'Additional notes'}
                 </p>
                 <textarea
-                  value={entry.notes}
-                  onChange={(e) => onNotesChange(e.target.value)}
+                  value={localNotes}
+                  onChange={(e) => setLocalNotes(e.target.value)}
+                  onBlur={() => onNotesChange(localNotes)}
                   rows={2}
                   placeholder={category.type === 'yesno' ? 'Describe the hazard...' : 'Add site-specific observations...'}
                   readOnly={readOnly}
@@ -680,13 +731,10 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
                         onRemove={() => onRemovePhoto(photo.id)}
                         readOnly={readOnly}
                       />
-                      <input
-                        type="text"
+                      <CaptionInput
                         value={photo.caption || ''}
-                        onChange={(e) => onCaptionChange(photo.id, e.target.value)}
-                        placeholder="Caption (optional)"
+                        onChange={(val) => onCaptionChange(photo.id, val)}
                         readOnly={readOnly}
-                        className="flex-1 self-start text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
                       />
                     </div>
                   ))}
@@ -746,6 +794,14 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
 function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onNotesChange, onAddPhotos, onAnnotate, onSetFlag, onRemovePhoto, onCaptionChange, readOnly }) {
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
+  const [localNotes, setLocalNotes] = useState(replacements.notes || '');
+  const prevNotesRef = useRef(replacements.notes);
+  useEffect(() => {
+    if (replacements.notes !== prevNotesRef.current) {
+      setLocalNotes(replacements.notes || '');
+      prevNotesRef.current = replacements.notes;
+    }
+  }, [replacements.notes]);
 
   return (
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
@@ -817,8 +873,9 @@ function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onN
               Notes
             </p>
             <textarea
-              value={replacements.notes}
-              onChange={(e) => onNotesChange(e.target.value)}
+              value={localNotes}
+              onChange={(e) => setLocalNotes(e.target.value)}
+              onBlur={() => onNotesChange(localNotes)}
               rows={2}
               placeholder="E.g. species affected, location within zone, suggested replacements..."
               readOnly={readOnly}
@@ -839,13 +896,10 @@ function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onN
                     onRemove={() => onRemovePhoto(photo.id)}
                     readOnly={readOnly}
                   />
-                  <input
-                    type="text"
+                  <CaptionInput
                     value={photo.caption || ''}
-                    onChange={(e) => onCaptionChange(photo.id, e.target.value)}
-                    placeholder="Caption (optional)"
+                    onChange={(val) => onCaptionChange(photo.id, val)}
                     readOnly={readOnly}
-                    className="flex-1 self-start text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
                   />
                 </div>
               ))}
@@ -1331,25 +1385,33 @@ function Dashboard({ records, onNewQA, onOpenRecord, onOpenModuleStub, onDeleteR
                 const mod = MODULES[r.module];
                 const Icon = mod.icon;
                 return (
-                  <button
+                  <div
                     key={r.id}
-                    onClick={() => onOpenRecord(r.id)}
                     className="w-full bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between text-left"
                   >
-                    <div className="flex items-center gap-3">
+                    <button onClick={() => onOpenRecord(r.id)} className="flex items-center gap-3 text-left flex-1 min-w-0">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: mod.bg, color: mod.text }}>
                         <Icon size={14} />
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-slate-800">{r.siteInfo.site || 'Untitled site'}</p>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{r.siteInfo.site || 'Untitled site'}</p>
                         <p className="text-xs text-slate-400 mt-0.5">{mod.label} &middot; {r.zones.length} zone{r.zones.length === 1 ? '' : 's'} planned</p>
                       </div>
+                    </button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button onClick={() => onOpenRecord(r.id)} className="text-right">
+                        <StatusPill status={r.status} />
+                        <p className="text-xs text-slate-400 mt-1">{relativeDate(r.siteInfo.date)}</p>
+                      </button>
+                      <button
+                        onClick={() => onDeleteRecord(r.id, r.siteInfo.site || 'Untitled site', r.status)}
+                        aria-label="Delete assessment"
+                        className="w-7 h-7 flex items-center justify-center rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 flex-shrink-0"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
-                    <div className="text-right">
-                      <StatusPill status={r.status} />
-                      <p className="text-xs text-slate-400 mt-1">{relativeDate(r.siteInfo.date)}</p>
-                    </div>
-                  </button>
+                  </div>
                 );
               })}
             </>
@@ -1361,7 +1423,6 @@ function Dashboard({ records, onNewQA, onOpenRecord, onOpenModuleStub, onDeleteR
               {recentSorted.filter((r) => r.status !== 'scheduled').map((r) => {
                 const mod = MODULES[r.module];
                 const Icon = mod.icon;
-                const counts = ratingCounts({ categories: {} });
                 const issues = r.zones.reduce((acc, z) => acc + ratingCounts(z)['Below standard'] + ratingCounts(z).Fair, 0);
                 return (
                   <div
@@ -1385,16 +1446,13 @@ function Dashboard({ records, onNewQA, onOpenRecord, onOpenModuleStub, onDeleteR
                         <StatusPill status={r.status} />
                         <p className="text-xs text-slate-400 mt-1">{relativeDate(r.siteInfo.date)}</p>
                       </button>
-                      {r.status === 'completed' && (
-                        <button
-                          onClick={() => onDeleteRecord(r.id, r.siteInfo.site || 'Untitled site')}
-                          aria-label="Delete assessment"
-                          title="Delete assessment"
-                          className="w-7 h-7 flex items-center justify-center rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 flex-shrink-0"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
+                      <button
+                        onClick={() => onDeleteRecord(r.id, r.siteInfo.site || 'Untitled site', r.status)}
+                        aria-label="Delete assessment"
+                        className="w-7 h-7 flex items-center justify-center rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 flex-shrink-0"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
                   </div>
                 );
@@ -1465,6 +1523,63 @@ function Dashboard({ records, onNewQA, onOpenRecord, onOpenModuleStub, onDeleteR
    QA flow (setup / assess / summary / sitesummary / report)
 --------------------------------------------------------------- */
 
+function ZoneNameInput({ name, onBlur }) {
+  const [local, setLocal] = useState(name);
+  useEffect(() => { setLocal(name); }, [name]);
+  return (
+    <input
+      className="border-none outline-none bg-transparent text-sm text-slate-700"
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => onBlur(local)}
+    />
+  );
+}
+
+// Setup form with local state per field — commits on blur to prevent
+// expensive re-renders on every keystroke.
+function SiteInfoForm({ siteInfo, onCommit }) {
+  const [local, setLocal] = useState({ ...siteInfo });
+  const prevRef = useRef(siteInfo);
+  useEffect(() => {
+    if (siteInfo !== prevRef.current) {
+      setLocal({ ...siteInfo });
+      prevRef.current = siteInfo;
+    }
+  }, [siteInfo]);
+
+  const field = (key, placeholder, type = 'text') => (
+    <input
+      type={type}
+      className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
+      placeholder={placeholder}
+      value={local[key] || ''}
+      onChange={(e) => setLocal((prev) => ({ ...prev, [key]: e.target.value }))}
+      onBlur={() => onCommit({ [key]: local[key] })}
+    />
+  );
+
+  return (
+    <div className="space-y-2">
+      {field('client', 'Client name')}
+      {field('site', 'Site name')}
+      {field('address', 'Address')}
+      {field('technicians', 'Technician(s)')}
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs text-slate-400 block mb-1">Last service date</label>
+          {field('lastService', '', 'date')}
+        </div>
+        <div>
+          <label className="text-xs text-slate-400 block mb-1">QA date</label>
+          {field('date', '', 'date')}
+        </div>
+      </div>
+      {field('inspector', 'Inspector / assessor')}
+    </div>
+  );
+}
+
 function QAFlow({ record, onChange, onClose }) {
   const [screen, setScreen] = useState(record.status === 'scheduled' && record.zones.length === 0 ? 'setup' : 'assess');
   const [currentZoneIdx, setCurrentZoneIdx] = useState(0);
@@ -1475,6 +1590,27 @@ function QAFlow({ record, onChange, onClose }) {
   const [addingZone, setAddingZone] = useState(false);
   const [pendingZoneName, setPendingZoneName] = useState('');
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+
+  // Local zone summary text — sync when zone changes or summary is regenerated.
+  const [localZoneSummary, setLocalZoneSummary] = useState('');
+  useEffect(() => {
+    setLocalZoneSummary(currentZone?.summary || '');
+  }, [currentZoneIdx, currentZone?.summary]);
+  // re-rendering the whole app on every keystroke.
+  const [localSummary, setLocalSummary] = useState(record.overallSummary || '');
+  const [localActionPoints, setLocalActionPoints] = useState(record.actionPoints || []);
+  const prevSummaryRef = useRef(record.overallSummary);
+  const prevActionPointsRef = useRef(record.actionPoints);
+  useEffect(() => {
+    if (record.overallSummary !== prevSummaryRef.current) {
+      setLocalSummary(record.overallSummary || '');
+      prevSummaryRef.current = record.overallSummary;
+    }
+    if (record.actionPoints !== prevActionPointsRef.current) {
+      setLocalActionPoints(record.actionPoints || []);
+      prevActionPointsRef.current = record.actionPoints;
+    }
+  }, [record.overallSummary, record.actionPoints]);
 
   useEffect(() => {
     loadJsPDF().catch(() => {});
@@ -1609,7 +1745,10 @@ function QAFlow({ record, onChange, onClose }) {
   };
 
   const regenerateSummary = (zoneIdx) => {
-    updateZone(zoneIdx, (z) => ({ ...z, summary: generateSummary(z) }));
+    const zone = record.zones[zoneIdx];
+    const summary = generateSummary(zone);
+    updateZone(zoneIdx, (z) => ({ ...z, summary }));
+    if (zoneIdx === currentZoneIdx) setLocalZoneSummary(summary);
   };
 
   const handleExport = async () => {
@@ -1664,58 +1803,7 @@ function QAFlow({ record, onChange, onClose }) {
         <div className="p-4 space-y-4">
           <div>
             <h2 className="text-base font-medium text-slate-800 mb-3">Visit details</h2>
-            <div className="space-y-2">
-              <input
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                placeholder="Client name"
-                value={record.siteInfo.client}
-                onChange={(e) => updateSiteInfo({ client: e.target.value })}
-              />
-              <input
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                placeholder="Site name"
-                value={record.siteInfo.site}
-                onChange={(e) => updateSiteInfo({ site: e.target.value })}
-              />
-              <input
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                placeholder="Address"
-                value={record.siteInfo.address}
-                onChange={(e) => updateSiteInfo({ address: e.target.value })}
-              />
-              <input
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                placeholder="Technician(s)"
-                value={record.siteInfo.technicians}
-                onChange={(e) => updateSiteInfo({ technicians: e.target.value })}
-              />
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Last service date</label>
-                  <input
-                    type="date"
-                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                    value={record.siteInfo.lastService}
-                    onChange={(e) => updateSiteInfo({ lastService: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">QA date</label>
-                  <input
-                    type="date"
-                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                    value={record.siteInfo.date}
-                    onChange={(e) => updateSiteInfo({ date: e.target.value })}
-                  />
-                </div>
-              </div>
-              <input
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
-                placeholder="Inspector / assessor"
-                value={record.siteInfo.inspector}
-                onChange={(e) => updateSiteInfo({ inspector: e.target.value })}
-              />
-            </div>
+            <SiteInfoForm siteInfo={record.siteInfo} onCommit={updateSiteInfo} />
           </div>
 
           <div>
@@ -1725,10 +1813,9 @@ function QAFlow({ record, onChange, onClose }) {
                 <div key={z.id} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-3 py-2">
                   <span className="text-sm text-slate-700 flex items-center gap-2">
                     <MapPin size={14} className="text-slate-400" />
-                    <input
-                      className="border-none outline-none bg-transparent text-sm text-slate-700"
-                      value={z.name}
-                      onChange={(e) => updateZone(idx, (zz) => ({ ...zz, name: e.target.value }))}
+                    <ZoneNameInput
+                      name={z.name}
+                      onBlur={(val) => updateZone(idx, (zz) => ({ ...zz, name: val }))}
                     />
                   </span>
                   <button onClick={() => removeZone(idx)} className="text-slate-400 hover:text-red-500">
@@ -1949,8 +2036,9 @@ function QAFlow({ record, onChange, onClose }) {
               )}
             </div>
             <textarea
-              value={currentZone.summary}
-              onChange={(e) => updateZone(currentZoneIdx, (z) => ({ ...z, summary: e.target.value }))}
+              value={localZoneSummary}
+              onChange={(e) => setLocalZoneSummary(e.target.value)}
+              onBlur={() => updateZone(currentZoneIdx, (z) => ({ ...z, summary: localZoneSummary }))}
               rows={8}
               readOnly={readOnly}
               className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400 leading-relaxed"
@@ -2002,7 +2090,7 @@ function QAFlow({ record, onChange, onClose }) {
               </p>
               {!readOnly && (
                 <button
-                  onClick={() => update({ overallSummary: generateOverallSummary(record.zones, record.siteInfo.site) })}
+                  onClick={() => { const s = generateOverallSummary(record.zones, record.siteInfo.site); setLocalSummary(s); update({ overallSummary: s }); }}
                   className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
                 >
                   <RefreshCw size={11} /> Regenerate
@@ -2010,8 +2098,9 @@ function QAFlow({ record, onChange, onClose }) {
               )}
             </div>
             <textarea
-              value={record.overallSummary}
-              onChange={(e) => update({ overallSummary: e.target.value })}
+              value={localSummary}
+              onChange={(e) => setLocalSummary(e.target.value)}
+              onBlur={() => update({ overallSummary: localSummary })}
               rows={8}
               readOnly={readOnly}
               className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400 leading-relaxed"
@@ -2025,27 +2114,28 @@ function QAFlow({ record, onChange, onClose }) {
               </p>
               {!readOnly && (
                 <button
-                  onClick={() => update({ actionPoints: generateActionPoints(record.zones) })}
+                  onClick={() => { const pts = generateActionPoints(record.zones); setLocalActionPoints(pts); update({ actionPoints: pts }); }}
                   className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
                 >
                   <RefreshCw size={11} /> Regenerate
                 </button>
               )}
             </div>
-            {record.actionPoints.length === 0 ? (
+            {localActionPoints.length === 0 ? (
               <p className="text-sm text-slate-400 italic py-1">No action points yet.</p>
             ) : (
               <div className="space-y-2">
-                {record.actionPoints.map((point, idx) => (
+                {localActionPoints.map((point, idx) => (
                   <div key={idx} className="flex items-start gap-2">
                     <span className="text-slate-400 mt-2.5 text-xs">&bull;</span>
                     <textarea
                       value={point}
                       onChange={(e) => {
-                        const next = [...record.actionPoints];
+                        const next = [...localActionPoints];
                         next[idx] = e.target.value;
-                        update({ actionPoints: next });
+                        setLocalActionPoints(next);
                       }}
+                      onBlur={() => update({ actionPoints: localActionPoints })}
                       rows={1}
                       readOnly={readOnly}
                       className="flex-1 text-sm text-slate-700 border border-slate-200 rounded-lg p-2 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400 leading-snug"
@@ -2053,7 +2143,8 @@ function QAFlow({ record, onChange, onClose }) {
                     {!readOnly && (
                       <button
                         onClick={() => {
-                          const next = record.actionPoints.filter((_, i) => i !== idx);
+                          const next = localActionPoints.filter((_, i) => i !== idx);
+                          setLocalActionPoints(next);
                           update({ actionPoints: next });
                         }}
                         aria-label="Remove action point"
@@ -2068,7 +2159,7 @@ function QAFlow({ record, onChange, onClose }) {
             )}
             {!readOnly && (
               <button
-                onClick={() => update({ actionPoints: [...record.actionPoints, ''] })}
+                onClick={() => { const next = [...localActionPoints, '']; setLocalActionPoints(next); update({ actionPoints: next }); }}
                 className="mt-2 w-full flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
               >
                 <Plus size={14} /> Add action point
@@ -2120,7 +2211,11 @@ function QAFlow({ record, onChange, onClose }) {
               const patch = {};
               if (!record.overallSummary) patch.overallSummary = generateOverallSummary(record.zones, record.siteInfo.site);
               if (!record.actionPoints || record.actionPoints.length === 0) patch.actionPoints = generateActionPoints(record.zones);
-              if (Object.keys(patch).length > 0) update(patch);
+              if (Object.keys(patch).length > 0) {
+                update(patch);
+                if (patch.overallSummary) setLocalSummary(patch.overallSummary);
+                if (patch.actionPoints) setLocalActionPoints(patch.actionPoints);
+              }
               setScreen('sitesummary');
             }}
             className="w-full py-2.5 rounded-lg border border-slate-200 text-sm text-slate-600 bg-white flex items-center justify-center gap-1.5"
@@ -2345,8 +2440,9 @@ export default function HortiCheckApp() {
     setRecords((prev) => prev.map((r) => (r.id === id ? updated : r)));
   };
 
-  const deleteRecord = (id, siteName) => {
-    if (!window.confirm(`Delete the completed assessment for "${siteName}"? This can't be undone.`)) return;
+  const deleteRecord = (id, siteName, status) => {
+    const label = status === 'completed' ? 'completed' : status === 'in_progress' ? 'in-progress' : 'scheduled';
+    if (!window.confirm(`Delete this ${label} assessment for "${siteName}"? This can't be undone.`)) return;
     setRecords((prev) => prev.filter((r) => r.id !== id));
   };
 
@@ -2366,7 +2462,7 @@ export default function HortiCheckApp() {
           onNewQA={newQA}
           onOpenRecord={openRecord}
           onOpenModuleStub={(key) => setView({ screen: 'stub', module: key })}
-          onDeleteRecord={deleteRecord}
+          onDeleteRecord={(id, siteName, status) => deleteRecord(id, siteName, status)}
         />
       )}
       {view.screen === 'qa' && (
