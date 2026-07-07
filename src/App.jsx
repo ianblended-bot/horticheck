@@ -370,7 +370,7 @@ function newQARecord(overrides = {}) {
   return {
     id: `qa-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     module: 'qa',
-    status: 'scheduled', // scheduled | in_progress | completed
+    status: 'scheduled',
     siteInfo: {
       client: '',
       site: '',
@@ -384,6 +384,40 @@ function newQARecord(overrides = {}) {
     overallSummary: '',
     actionPoints: [],
     ...overrides,
+  };
+}
+
+function newSARecord(overrides = {}) {
+  return {
+    id: `sa-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    module: 'sa',
+    status: 'scheduled',
+    siteInfo: {
+      client: '',
+      site: '',
+      address: '',
+      inspector: '',
+      date: new Date().toISOString().slice(0, 10),
+    },
+    zones: [],
+    overallNotes: '',
+    ...overrides,
+  };
+}
+
+function newSAZone(name) {
+  return {
+    id: `sazone-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    name,
+    plants: '',
+    containers: '',
+    pests: null,
+    pestPhotos: [],
+    replacements: '',
+    replacementPhotos: [],
+    notes: '',
+    notePhotos: [],
+    zonePhotos: [],
   };
 }
 
@@ -1231,7 +1265,7 @@ async function exportQAPdf(record, options = {}) {
    Dashboard
 --------------------------------------------------------------- */
 
-function Dashboard({ records, onNewQA, onOpenRecord, onOpenModuleStub, onDeleteRecord }) {
+function Dashboard({ records, onNewQA, onNewSA, onOpenRecord, onOpenModuleStub, onDeleteRecord }) {
   const [view, setView] = useState('list'); // list | calendar
 
   const scheduled = records.filter((r) => r.status === 'scheduled');
@@ -1312,7 +1346,7 @@ function Dashboard({ records, onNewQA, onOpenRecord, onOpenModuleStub, onDeleteR
           return (
             <button
               key={key}
-              onClick={() => (key === 'qa' ? onNewQA() : onOpenModuleStub(key))}
+              onClick={() => key === 'qa' ? onNewQA() : key === 'sa' ? onNewSA() : onOpenModuleStub(key)}
               className="flex flex-col items-center gap-1.5 py-3 px-1 rounded-xl border border-slate-200 hover:border-slate-300 bg-white text-center"
             >
               <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: mod.bg, color: mod.text }}>
@@ -2255,6 +2289,542 @@ function QAFlow({ record, onChange, onClose }) {
 }
 
 /* ---------------------------------------------------------------
+   SA — PDF export
+--------------------------------------------------------------- */
+
+const SA_ACCENT = [30, 64, 175]; // blue #1E40AF
+
+async function exportSAPdf(record) {
+  const jsPDF = await loadJsPDF();
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pageW = 210;
+  const pageH = 297;
+  const margin = 16;
+  let y = margin;
+  const { siteInfo, zones } = record;
+
+  const addHeaderBar = (title) => {
+    doc.setFillColor(...SA_ACCENT);
+    doc.rect(0, 0, pageW, 14, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(11); doc.setFont(undefined, 'bold');
+    doc.text('HortiCheck', margin, 9);
+    doc.setFont(undefined, 'normal'); doc.setFontSize(9);
+    doc.text(title, pageW - margin, 9, { align: 'right' });
+    doc.setTextColor(40, 40, 40);
+    y = 24;
+  };
+
+  const drawWrappedText = (text, headerTitle) => {
+    if (!text) return;
+    text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).forEach((para, idx, arr) => {
+      doc.splitTextToSize(para, pageW - margin * 2).forEach((line) => {
+        if (y > pageH - margin) { doc.addPage(); addHeaderBar(headerTitle); }
+        doc.text(line, margin, y); y += 5.5;
+      });
+      if (idx < arr.length - 1) y += 2.5;
+    });
+  };
+
+  // Cover page
+  doc.setFillColor(...SA_ACCENT);
+  doc.rect(0, 0, pageW, 60, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(22); doc.setFont(undefined, 'bold');
+  doc.text('HortiCheck', margin, 28);
+  doc.setFontSize(13); doc.setFont(undefined, 'normal');
+  doc.text('Site audit report', margin, 38);
+  doc.setTextColor(40, 40, 40);
+  y = 78;
+  [['Client', siteInfo.client || '-'], ['Site', siteInfo.site || '-'], ['Address', siteInfo.address || '-'],
+   ['Date', siteInfo.date ? new Date(siteInfo.date + 'T00:00:00').toLocaleDateString('en-GB') : '-'],
+   ['Inspector', siteInfo.inspector || '-'], ['Zones audited', String(zones.length)]].forEach(([label, val]) => {
+    doc.setFont(undefined, 'bold'); doc.setFontSize(11);
+    doc.text(label + ':', margin, y);
+    doc.setFont(undefined, 'normal');
+    doc.text(val, margin + 38, y);
+    y += 8;
+  });
+  if (record.overallNotes) {
+    y += 4;
+    doc.setFont(undefined, 'bold'); doc.setFontSize(12); doc.setTextColor(20, 20, 20);
+    doc.text('Overall site notes', margin, y); y += 7;
+    doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
+    drawWrappedText(record.overallNotes, siteInfo.site || '');
+  }
+
+  // Per-zone pages
+  zones.forEach((zone) => {
+    doc.addPage();
+    addHeaderBar(siteInfo.site || '');
+    doc.setFontSize(15); doc.setFont(undefined, 'bold'); doc.setTextColor(20, 20, 20);
+    doc.text(zone.name, margin, y); y += 10;
+    doc.setFontSize(10);
+    [['Plants', zone.plants || '-'], ['Containers', zone.containers || '-'],
+     ['Signs of pests', zone.pests || '-'], ['Replacements required', zone.replacements || '-']].forEach(([label, val]) => {
+      doc.setFont(undefined, 'normal'); doc.setTextColor(60, 60, 60);
+      doc.text(label, margin, y);
+      doc.setFont(undefined, 'bold'); doc.setTextColor(40, 40, 40);
+      doc.text(String(val), pageW - margin, y, { align: 'right' });
+      y += 7;
+    });
+    if (zone.notes) {
+      y += 4;
+      doc.setDrawColor(220, 220, 220); doc.line(margin, y, pageW - margin, y); y += 6;
+      doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
+      doc.text('Notes', margin, y); y += 6;
+      doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
+      drawWrappedText(zone.notes, siteInfo.site || '');
+    }
+    [{ label: 'Zone photos', photos: zone.zonePhotos || [] },
+     { label: 'Pest photos', photos: zone.pestPhotos || [] },
+     { label: 'Replacement photos', photos: zone.replacementPhotos || [] },
+     { label: 'Note photos', photos: zone.notePhotos || [] }].filter((s) => s.photos.length > 0).forEach(({ label, photos }) => {
+      if (y > pageH - 60) { doc.addPage(); addHeaderBar(siteInfo.site || ''); }
+      y += 6;
+      doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
+      doc.text(label, margin, y); y += 8;
+      const imgW = 80; let x = margin; let rowMaxH = 0;
+      photos.forEach((photo) => {
+        const src = photo.annotatedSrc || photo.src;
+        const ratio = photo.height && photo.width ? photo.height / photo.width : 0.75;
+        const imgH = imgW * ratio;
+        if (x + imgW > pageW - margin) { x = margin; y += rowMaxH + 12; rowMaxH = 0; }
+        if (y + imgH + 8 > pageH - margin) { doc.addPage(); addHeaderBar(siteInfo.site || ''); x = margin; y = 24; }
+        try { doc.addImage(src, 'JPEG', x, y, imgW, imgH); } catch (e) {}
+        if (photo.caption) {
+          doc.setFontSize(8); doc.setTextColor(100, 100, 100); doc.setFont(undefined, 'normal');
+          doc.text(photo.caption.slice(0, 60), x, y + imgH + 4);
+        }
+        rowMaxH = Math.max(rowMaxH, imgH); x += imgW + 8;
+      });
+      y += rowMaxH + 10;
+    });
+  });
+  doc.save(`HortiCheck_SA_${(siteInfo.site || 'report').replace(/\s+/g, '_')}.pdf`);
+}
+
+/* ---------------------------------------------------------------
+   SA — Simple photo row (no flagging needed)
+--------------------------------------------------------------- */
+
+function SAPhotoRow({ photos, onAdd, onAnnotate, onRemove, onCaptionChange, readOnly }) {
+  const cameraRef = useRef(null);
+  const galleryRef = useRef(null);
+  return (
+    <div className="space-y-2 mt-2">
+      {photos.map((photo) => (
+        <div key={photo.id} className="flex gap-3">
+          <div className="flex-shrink-0 w-24">
+            <div className="relative w-24 h-24 rounded-lg border border-slate-200 overflow-hidden bg-slate-50">
+              <img src={photo.annotatedSrc || photo.src} alt="" className="w-full h-full object-cover" />
+            </div>
+            {!readOnly && (
+              <div className="flex gap-1 mt-1">
+                <button onClick={() => onAnnotate(photo)} className="flex-1 flex items-center justify-center py-1.5 rounded-md border border-slate-200 text-slate-500">
+                  <Pencil size={13} />
+                </button>
+                <button onClick={() => onRemove(photo.id)} className="flex-1 flex items-center justify-center py-1.5 rounded-md border border-slate-200 text-slate-500">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            )}
+          </div>
+          <CaptionInput value={photo.caption || ''} onChange={(val) => onCaptionChange(photo.id, val)} readOnly={readOnly} />
+        </div>
+      ))}
+      {!readOnly && (
+        <div className="flex gap-2">
+          <button onClick={() => cameraRef.current.click()} className="flex-1 flex items-center justify-center gap-1.5 text-xs text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50">
+            <Camera size={14} /> Take photo
+          </button>
+          <button onClick={() => galleryRef.current.click()} className="flex-1 flex items-center justify-center gap-1.5 text-xs text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50">
+            <ImageIcon size={14} /> Upload
+          </button>
+        </div>
+      )}
+      <input ref={cameraRef} type="file" accept="image/*" multiple capture="environment" className="hidden" onChange={(e) => { onAdd(e.target.files); e.target.value = ''; }} />
+      <input ref={galleryRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { onAdd(e.target.files); e.target.value = ''; }} />
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   SA — Main flow component
+--------------------------------------------------------------- */
+
+function SAFlow({ record, onChange, onClose }) {
+  const [screen, setScreen] = useState(record.status === 'scheduled' && record.zones.length === 0 ? 'setup' : 'assess');
+  const [currentZoneIdx, setCurrentZoneIdx] = useState(0);
+  const [annotating, setAnnotating] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const [addingZone, setAddingZone] = useState(false);
+  const [pendingZoneName, setPendingZoneName] = useState('');
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+
+  const readOnly = record.status === 'completed';
+  const currentZone = record.zones[currentZoneIdx];
+  const ACCENT = '#1E40AF';
+
+  const update = (patch) => { if (!readOnly) onChange({ ...record, ...patch }); };
+  const updateSiteInfo = (patch) => update({ siteInfo: { ...record.siteInfo, ...patch } });
+  const updateZone = (idx, updater) => update({ zones: record.zones.map((z, i) => i === idx ? updater(z) : z) });
+  const updateZoneField = (idx, field, val) => updateZone(idx, (z) => ({ ...z, [field]: val }));
+
+  const addPhoto = async (zoneIdx, field, files) => {
+    const newPhotos = [];
+    for (const file of Array.from(files)) {
+      try {
+        const { src, width, height } = await readFileAsImage(file);
+        newPhotos.push({ id: `p-${Date.now()}-${Math.random().toString(36).slice(2)}`, src, width, height, annotatedSrc: null, caption: '' });
+      } catch (e) {}
+    }
+    if (!newPhotos.length) return;
+    updateZone(zoneIdx, (z) => ({ ...z, [field]: [...(z[field] || []), ...newPhotos] }));
+    if (record.status === 'scheduled') update({ status: 'in_progress' });
+  };
+
+  const removePhoto = (zoneIdx, field, photoId) => updateZone(zoneIdx, (z) => ({ ...z, [field]: (z[field] || []).filter((p) => p.id !== photoId) }));
+  const setCaption = (zoneIdx, field, photoId, caption) => updateZone(zoneIdx, (z) => ({ ...z, [field]: (z[field] || []).map((p) => p.id === photoId ? { ...p, caption } : p) }));
+  const saveAnnotation = (zoneIdx, field, photoId, dataUrl) => {
+    updateZone(zoneIdx, (z) => ({ ...z, [field]: (z[field] || []).map((p) => p.id === photoId ? { ...p, annotatedSrc: dataUrl } : p) }));
+    setAnnotating(null);
+  };
+
+  const confirmNewZone = () => {
+    if (!pendingZoneName.trim()) return;
+    const z = newSAZone(pendingZoneName.trim());
+    update({ zones: [...record.zones, z] });
+    setCurrentZoneIdx(record.zones.length);
+    setAddingZone(false);
+    setPendingZoneName('');
+    setScreen('assess');
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try { await exportSAPdf(record); }
+    catch (e) { alert('Could not generate the PDF. Please try again.'); }
+    finally { setExporting(false); }
+  };
+
+  const TopBar = ({ title }) => (
+    <div className="px-4 py-3 flex items-center justify-between border-b border-slate-200 bg-white sticky top-0 z-10">
+      <button onClick={onClose} className="text-xs text-slate-500 flex items-center gap-1"><ArrowLeft size={14} /> Dashboard</button>
+      <span className="text-sm font-medium text-slate-800 flex items-center gap-1.5">
+        <ClipboardList size={14} style={{ color: ACCENT }} /> {title || 'HortiCheck SA'}
+      </span>
+      <span className="text-xs text-slate-400">
+        {record.zones.length > 0 && screen === 'assess' ? `${currentZoneIdx + 1} / ${record.zones.length}` : ''}
+      </span>
+    </div>
+  );
+
+  return (
+    <div className="pb-4">
+      {annotating && (
+        <AnnotatorModal
+          photo={annotating.photo}
+          onSave={(dataUrl) => saveAnnotation(annotating.zoneIdx, annotating.field, annotating.photo.id, dataUrl)}
+          onClose={() => setAnnotating(null)}
+        />
+      )}
+
+      {/* Setup */}
+      {screen === 'setup' && (
+        <>
+          <TopBar title="New site audit" />
+          <div className="p-4 space-y-4">
+            <div>
+              <h2 className="text-base font-medium text-slate-800 mb-3">Visit details</h2>
+              <div className="space-y-2">
+                {[['client','Client name'],['site','Site name'],['address','Address'],['inspector','Inspector / assessor']].map(([key, placeholder]) => (
+                  <input
+                    key={key + '|' + (record.siteInfo[key] || '')}
+                    type="text"
+                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    placeholder={placeholder}
+                    defaultValue={record.siteInfo[key] || ''}
+                    onBlur={(e) => updateSiteInfo({ [key]: e.target.value })}
+                  />
+                ))}
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Audit date</label>
+                  <input
+                    key={'date|' + record.siteInfo.date}
+                    type="date"
+                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    defaultValue={record.siteInfo.date || ''}
+                    onBlur={(e) => updateSiteInfo({ date: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+            <div>
+              <h2 className="text-base font-medium text-slate-800 mb-3">Zones / locations</h2>
+              <div className="space-y-2 mb-3">
+                {record.zones.map((z, idx) => (
+                  <div key={z.id} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-3 py-2">
+                    <span className="text-sm text-slate-700 flex items-center gap-2">
+                      <MapPin size={14} className="text-slate-400" />
+                      <ZoneNameInput name={z.name} onBlur={(val) => updateZone(idx, (zz) => ({ ...zz, name: val }))} />
+                    </span>
+                    <button onClick={() => update({ zones: record.zones.filter((_, i) => i !== idx) })} className="text-slate-400 hover:text-red-500">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  placeholder="Zone name (e.g. Reception)"
+                  value={pendingZoneName}
+                  onChange={(e) => setPendingZoneName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && pendingZoneName.trim()) { update({ zones: [...record.zones, newSAZone(pendingZoneName.trim())] }); setPendingZoneName(''); } }}
+                />
+                <button
+                  onClick={() => { if (pendingZoneName.trim()) { update({ zones: [...record.zones, newSAZone(pendingZoneName.trim())] }); setPendingZoneName(''); } }}
+                  className="w-10 h-10 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+            </div>
+            <button
+              disabled={record.zones.length === 0}
+              onClick={() => { setCurrentZoneIdx(0); setScreen('assess'); if (record.status === 'scheduled') update({ status: 'in_progress' }); }}
+              style={{ background: record.zones.length > 0 ? ACCENT : undefined }}
+              className="w-full py-2.5 rounded-lg text-white text-sm font-medium disabled:bg-slate-200 disabled:text-slate-400"
+            >
+              {record.status === 'scheduled' ? 'Start audit' : 'Return to audit'}
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Assess */}
+      {screen === 'assess' && currentZone && (
+        <>
+          <TopBar />
+          <div className="px-4 pt-3 pb-1">
+            <div className="flex items-center gap-2 mb-2">
+              <button onClick={() => setScreen('setup')} className="text-xs text-slate-500 flex items-center gap-1"><ArrowLeft size={14} /> Setup</button>
+              <span className="text-sm font-medium text-slate-800 ml-1">{currentZone.name}</span>
+            </div>
+            <div className="flex gap-1.5 items-center mb-3">
+              <div className="flex gap-1.5 overflow-x-auto pb-1 flex-1">
+                {record.zones.map((z, idx) => (
+                  <button
+                    key={z.id}
+                    onClick={() => setCurrentZoneIdx(idx)}
+                    style={idx === currentZoneIdx ? { background: ACCENT, borderColor: ACCENT } : {}}
+                    className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-xs border ${idx === currentZoneIdx ? 'text-white' : 'bg-white text-slate-500 border-slate-200'}`}
+                  >
+                    {z.name}
+                  </button>
+                ))}
+              </div>
+              {!readOnly && (
+                <button onClick={() => { setAddingZone(true); setPendingZoneName(`Zone ${record.zones.length + 1}`); }} className="w-8 h-8 flex items-center justify-center border border-slate-200 rounded-lg text-slate-500 flex-shrink-0">
+                  <Plus size={15} />
+                </button>
+              )}
+              <button onClick={() => setScreen('report')} className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-600">
+                <ClipboardList size={13} /> Report
+              </button>
+            </div>
+            {addingZone && (
+              <div className="border border-slate-200 rounded-xl p-3 flex gap-2 items-center mb-3 bg-white">
+                <input autoFocus className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="Zone name" value={pendingZoneName} onChange={(e) => setPendingZoneName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && confirmNewZone()} />
+                <button onClick={confirmNewZone} style={{ background: ACCENT }} className="px-3 py-2 rounded-lg text-white text-sm font-medium">Add</button>
+                <button onClick={() => { setAddingZone(false); setPendingZoneName(''); }} className="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-600">Cancel</button>
+              </div>
+            )}
+          </div>
+
+          <div className="px-4 space-y-3">
+            {/* Plants */}
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Number of plants</p>
+              <input key={`pl-${currentZoneIdx}-${currentZone.plants}`} type="number" min="0"
+                defaultValue={currentZone.plants || ''} onFocus={(e) => e.target.select()}
+                onBlur={(e) => updateZoneField(currentZoneIdx, 'plants', e.target.value)}
+                readOnly={readOnly} placeholder="0"
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+
+            {/* Containers */}
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Number of containers</p>
+              <input key={`co-${currentZoneIdx}-${currentZone.containers}`} type="number" min="0"
+                defaultValue={currentZone.containers || ''} onFocus={(e) => e.target.select()}
+                onBlur={(e) => updateZoneField(currentZoneIdx, 'containers', e.target.value)}
+                readOnly={readOnly} placeholder="0"
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            </div>
+
+            {/* Pests */}
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Signs of pests</p>
+              <div className="grid grid-cols-2 gap-2">
+                {['No', 'Yes'].map((v) => (
+                  <button key={v} disabled={readOnly}
+                    onClick={() => updateZoneField(currentZoneIdx, 'pests', currentZone.pests === v ? null : v)}
+                    style={currentZone.pests === v ? { background: ACCENT, borderColor: ACCENT } : {}}
+                    className={`py-2 rounded-lg text-sm border transition-colors ${currentZone.pests === v ? 'text-white font-medium' : 'border-slate-200 text-slate-600'}`}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+              {currentZone.pests === 'Yes' && (
+                <SAPhotoRow photos={currentZone.pestPhotos || []}
+                  onAdd={(files) => addPhoto(currentZoneIdx, 'pestPhotos', files)}
+                  onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'pestPhotos', photo })}
+                  onRemove={(id) => removePhoto(currentZoneIdx, 'pestPhotos', id)}
+                  onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'pestPhotos', id, cap)}
+                  readOnly={readOnly} />
+              )}
+            </div>
+
+            {/* Replacements */}
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Replacements required</p>
+              <input key={`re-${currentZoneIdx}-${currentZone.replacements}`} type="number" min="0"
+                defaultValue={currentZone.replacements || ''} onFocus={(e) => e.target.select()}
+                onBlur={(e) => updateZoneField(currentZoneIdx, 'replacements', e.target.value)}
+                readOnly={readOnly} placeholder="0"
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mb-1 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+              <SAPhotoRow photos={currentZone.replacementPhotos || []}
+                onAdd={(files) => addPhoto(currentZoneIdx, 'replacementPhotos', files)}
+                onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'replacementPhotos', photo })}
+                onRemove={(id) => removePhoto(currentZoneIdx, 'replacementPhotos', id)}
+                onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'replacementPhotos', id, cap)}
+                readOnly={readOnly} />
+            </div>
+
+            {/* Notes */}
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Notes</p>
+              <textarea key={`no-${currentZoneIdx}-${currentZone.notes}`}
+                defaultValue={currentZone.notes || ''} onBlur={(e) => updateZoneField(currentZoneIdx, 'notes', e.target.value)}
+                rows={3} readOnly={readOnly} placeholder="Any additional observations for this zone..."
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 mb-1" />
+              <SAPhotoRow photos={currentZone.notePhotos || []}
+                onAdd={(files) => addPhoto(currentZoneIdx, 'notePhotos', files)}
+                onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'notePhotos', photo })}
+                onRemove={(id) => removePhoto(currentZoneIdx, 'notePhotos', id)}
+                onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'notePhotos', id, cap)}
+                readOnly={readOnly} />
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Zone photos</p>
+              <p className="text-xs text-slate-400 mb-2">General visual record of this zone — all included in the PDF report.</p>
+              <SAPhotoRow photos={currentZone.zonePhotos || []}
+                onAdd={(files) => addPhoto(currentZoneIdx, 'zonePhotos', files)}
+                onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'zonePhotos', photo })}
+                onRemove={(id) => removePhoto(currentZoneIdx, 'zonePhotos', id)}
+                onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'zonePhotos', id, cap)}
+                readOnly={readOnly} />
+            </div>
+
+            <div className="flex gap-2 pt-2 pb-4">
+              {!readOnly && (
+                <button onClick={() => { setAddingZone(true); setPendingZoneName(`Zone ${record.zones.length + 1}`); }}
+                  className="flex-1 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-600 bg-white flex items-center justify-center gap-1.5">
+                  <Plus size={14} /> New zone
+                </button>
+              )}
+              <button onClick={() => setScreen('report')}
+                style={{ background: ACCENT }}
+                className="flex-1 py-2.5 rounded-lg text-white text-sm font-medium flex items-center justify-center gap-1.5">
+                <ClipboardList size={14} /> Report
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Report overview */}
+      {screen === 'report' && (
+        <>
+          <TopBar title="Report overview" />
+          <div className="p-4 space-y-3">
+            {readOnly && (
+              <div className="flex items-center gap-2 bg-green-50 text-green-700 rounded-xl px-3 py-2.5 text-xs font-medium">
+                <CheckCircle2 size={14} /> Submitted — read only
+              </div>
+            )}
+            <div className="bg-white border border-slate-200 rounded-xl p-3 text-sm">
+              <p className="font-semibold text-slate-800">{record.siteInfo.site || 'Untitled site'}</p>
+              {record.siteInfo.client && <p className="text-slate-500 text-xs mt-0.5">{record.siteInfo.client}</p>}
+              {record.siteInfo.address && <p className="text-slate-500 text-xs">{record.siteInfo.address}</p>}
+              {record.siteInfo.inspector && <p className="text-slate-500 text-xs mt-1">Inspector: {record.siteInfo.inspector}</p>}
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Overall site notes</p>
+              <textarea key={record.overallNotes}
+                defaultValue={record.overallNotes || ''}
+                onBlur={(e) => update({ overallNotes: e.target.value })}
+                rows={5} readOnly={readOnly}
+                placeholder="General observations, site condition, access notes..."
+                className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 leading-relaxed" />
+            </div>
+            <div className="space-y-2">
+              {record.zones.map((z, idx) => (
+                <button key={z.id} onClick={() => { setCurrentZoneIdx(idx); setScreen('assess'); }}
+                  className="w-full bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between text-left">
+                  <div>
+                    <p className="text-sm font-medium text-slate-800">{z.name}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {[z.plants && `${z.plants} plants`, z.containers && `${z.containers} containers`,
+                        ((z.zonePhotos || []).length + (z.pestPhotos || []).length + (z.replacementPhotos || []).length + (z.notePhotos || []).length) > 0 &&
+                          `${(z.zonePhotos || []).length + (z.pestPhotos || []).length + (z.replacementPhotos || []).length + (z.notePhotos || []).length} photo${((z.zonePhotos || []).length + (z.pestPhotos || []).length + (z.replacementPhotos || []).length + (z.notePhotos || []).length) === 1 ? '' : 's'}`
+                      ].filter(Boolean).join(' · ') || 'No data yet'}
+                    </p>
+                  </div>
+                  <ChevronRight size={16} className="text-slate-400 flex-shrink-0" />
+                </button>
+              ))}
+            </div>
+            <button onClick={handleExport} disabled={exporting}
+              className="w-full py-2.5 rounded-lg border border-slate-200 text-sm text-slate-600 bg-white flex items-center justify-center gap-1.5 disabled:opacity-50">
+              <Download size={14} /> {exporting ? 'Generating...' : 'Export PDF'}
+            </button>
+            {!readOnly && (
+              <button onClick={() => setShowSubmitConfirm(true)}
+                style={{ background: ACCENT }}
+                className="w-full py-2.5 rounded-lg text-white text-sm font-medium">
+                Submit
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {showSubmitConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl p-5 w-full max-w-sm shadow-xl">
+            <p className="text-base font-semibold text-slate-800 mb-2">Submit audit?</p>
+            <p className="text-sm text-slate-500 mb-5">Once submitted, this audit will be locked and can no longer be edited.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowSubmitConfirm(false)} className="flex-1 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-600">Cancel</button>
+              <button
+                onClick={() => { update({ status: 'completed' }); setShowSubmitConfirm(false); setScreen('report'); }}
+                style={{ background: ACCENT }}
+                className="flex-1 py-2.5 rounded-lg text-white text-sm font-medium">
+                Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    Stub screen for not-yet-built modules
 --------------------------------------------------------------- */
 
@@ -2319,6 +2889,8 @@ export default function HortiCheckApp() {
       });
       return {
         ...z,
+        // SA zone: ensure zonePhotos exists
+        zonePhotos: (z.zonePhotos || []).map(migratePhoto),
         categories: migratedCategories,
         replacements: z.replacements
           ? { ...z.replacements, photos: (z.replacements.photos || []).map(migratePhoto) }
@@ -2368,17 +2940,21 @@ export default function HortiCheckApp() {
   const openRecord = (id) => {
     const record = records.find((r) => r.id === id);
     if (!record) return;
-    if (record.module === 'qa') {
-      setView({ screen: 'qa', id });
-    } else {
-      setView({ screen: 'stub', module: record.module });
-    }
+    if (record.module === 'qa') setView({ screen: 'qa', id });
+    else if (record.module === 'sa') setView({ screen: 'sa', id });
+    else setView({ screen: 'stub', module: record.module });
   };
 
   const newQA = () => {
     const record = newQARecord({ status: 'scheduled' });
     setRecords((prev) => [...prev, record]);
     setView({ screen: 'qa', id: record.id });
+  };
+
+  const newSA = () => {
+    const record = newSARecord({ status: 'scheduled' });
+    setRecords((prev) => [...prev, record]);
+    setView({ screen: 'sa', id: record.id });
   };
 
   const updateRecord = (id, updated) => {
@@ -2405,6 +2981,7 @@ export default function HortiCheckApp() {
         <Dashboard
           records={records}
           onNewQA={newQA}
+          onNewSA={newSA}
           onOpenRecord={openRecord}
           onOpenModuleStub={(key) => setView({ screen: 'stub', module: key })}
           onDeleteRecord={(id, siteName, status) => deleteRecord(id, siteName, status)}
@@ -2412,6 +2989,13 @@ export default function HortiCheckApp() {
       )}
       {view.screen === 'qa' && (
         <QAFlow
+          record={records.find((r) => r.id === view.id)}
+          onChange={(updated) => updateRecord(view.id, updated)}
+          onClose={() => setView({ screen: 'dashboard' })}
+        />
+      )}
+      {view.screen === 'sa' && (
+        <SAFlow
           record={records.find((r) => r.id === view.id)}
           onChange={(updated) => updateRecord(view.id, updated)}
           onClose={() => setView({ screen: 'dashboard' })}
