@@ -502,14 +502,13 @@ function AnnotatorModal({ photo, onSave, onClose }) {
 // expensive parent re-renders on every keystroke — commits on blur.
 function CaptionInput({ value, onChange, readOnly }) {
   const [local, setLocal] = useState(value || '');
-  // Sync if parent resets caption (e.g. record loaded from storage).
   const prevRef = useRef(value);
   useEffect(() => {
     if (value !== prevRef.current) {
       setLocal(value || '');
       prevRef.current = value;
     }
-  }, [value]);
+  });
   return (
     <input
       type="text"
@@ -598,24 +597,16 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
   const [localFeedback, setLocalFeedback] = useState(entry.feedback || '');
   const [localNotes, setLocalNotes] = useState(entry.notes || '');
 
-  // Sync from parent when rating changes (auto-generated feedback text updates),
-  // or when the card is collapsed/expanded.
-  const prevRatingRef = useRef(entry.rating);
+  // Sync whenever entry is replaced from outside (new record loaded, rating
+  // changed triggering new auto-feedback, regenerate, etc.).
+  const entryRef = useRef(entry);
   useEffect(() => {
-    if (entry.rating !== prevRatingRef.current) {
+    if (entry !== entryRef.current) {
       setLocalFeedback(entry.feedback || '');
-      prevRatingRef.current = entry.rating;
+      setLocalNotes(entry.notes || '');
+      entryRef.current = entry;
     }
-  }, [entry.rating, entry.feedback]);
-
-  // Also sync if feedback is externally reset (e.g. regenerate).
-  const prevFeedbackRef = useRef(entry.feedback);
-  useEffect(() => {
-    if (entry.feedback !== prevFeedbackRef.current) {
-      setLocalFeedback(entry.feedback || '');
-      prevFeedbackRef.current = entry.feedback;
-    }
-  }, [entry.feedback]);
+  });
 
   return (
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
@@ -795,13 +786,13 @@ function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onN
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
   const [localNotes, setLocalNotes] = useState(replacements.notes || '');
-  const prevNotesRef = useRef(replacements.notes);
+  const replacementsRef = useRef(replacements);
   useEffect(() => {
-    if (replacements.notes !== prevNotesRef.current) {
+    if (replacements !== replacementsRef.current) {
       setLocalNotes(replacements.notes || '');
-      prevNotesRef.current = replacements.notes;
+      replacementsRef.current = replacements;
     }
-  }, [replacements.notes]);
+  });
 
   return (
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
@@ -1546,7 +1537,7 @@ function SiteInfoForm({ siteInfo, onCommit }) {
       setLocal({ ...siteInfo });
       prevRef.current = siteInfo;
     }
-  }, [siteInfo]);
+  });
 
   const field = (key, placeholder, type = 'text') => (
     <input
