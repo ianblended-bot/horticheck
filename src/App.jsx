@@ -501,20 +501,12 @@ function AnnotatorModal({ photo, onSave, onClose }) {
 // Controlled caption input with local state so typing doesn't trigger
 // expensive parent re-renders on every keystroke — commits on blur.
 function CaptionInput({ value, onChange, readOnly }) {
-  const [local, setLocal] = useState(value || '');
-  const prevRef = useRef(value);
-  useEffect(() => {
-    if (value !== prevRef.current) {
-      setLocal(value || '');
-      prevRef.current = value;
-    }
-  });
   return (
     <input
       type="text"
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={() => onChange(local)}
+      key={value}
+      defaultValue={value || ''}
+      onBlur={(e) => onChange(e.target.value)}
       placeholder="Caption (optional)"
       readOnly={readOnly}
       className="flex-1 self-start text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
@@ -592,22 +584,6 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
 
-  // Local state for text fields — decouples typing from parent re-renders.
-  // Changes are committed on blur rather than on every keystroke.
-  const [localFeedback, setLocalFeedback] = useState(entry.feedback || '');
-  const [localNotes, setLocalNotes] = useState(entry.notes || '');
-
-  // Sync whenever entry is replaced from outside (new record loaded, rating
-  // changed triggering new auto-feedback, regenerate, etc.).
-  const entryRef = useRef(entry);
-  useEffect(() => {
-    if (entry !== entryRef.current) {
-      setLocalFeedback(entry.feedback || '');
-      setLocalNotes(entry.notes || '');
-      entryRef.current = entry;
-    }
-  });
-
   return (
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
       <button
@@ -682,9 +658,9 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
                 Auto-generated feedback
               </p>
               <textarea
-                value={localFeedback}
-                onChange={(e) => setLocalFeedback(e.target.value)}
-                onBlur={() => onFeedbackChange(localFeedback)}
+                key={entry.feedback}
+                defaultValue={entry.feedback || ''}
+                onBlur={(e) => onFeedbackChange(e.target.value)}
                 rows={3}
                 readOnly={readOnly}
                 className="w-full text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400"
@@ -699,9 +675,9 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
                   {category.type === 'yesno' ? 'Hazard details' : 'Additional notes'}
                 </p>
                 <textarea
-                  value={localNotes}
-                  onChange={(e) => setLocalNotes(e.target.value)}
-                  onBlur={() => onNotesChange(localNotes)}
+                  key={entry.notes}
+                  defaultValue={entry.notes || ''}
+                  onBlur={(e) => onNotesChange(e.target.value)}
                   rows={2}
                   placeholder={category.type === 'yesno' ? 'Describe the hazard...' : 'Add site-specific observations...'}
                   readOnly={readOnly}
@@ -785,15 +761,6 @@ function CategoryCard({ category, entry, expanded, onToggle, onRate, onFeedbackC
 function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onNotesChange, onAddPhotos, onAnnotate, onSetFlag, onRemovePhoto, onCaptionChange, readOnly }) {
   const cameraInputRef = useRef(null);
   const galleryInputRef = useRef(null);
-  const [localNotes, setLocalNotes] = useState(replacements.notes || '');
-  const replacementsRef = useRef(replacements);
-  useEffect(() => {
-    if (replacements !== replacementsRef.current) {
-      setLocalNotes(replacements.notes || '');
-      replacementsRef.current = replacements;
-    }
-  });
-
   return (
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
       <button
@@ -864,9 +831,9 @@ function ReplacementsCard({ replacements, expanded, onToggle, onCountChange, onN
               Notes
             </p>
             <textarea
-              value={localNotes}
-              onChange={(e) => setLocalNotes(e.target.value)}
-              onBlur={() => onNotesChange(localNotes)}
+              key={replacements.notes}
+              defaultValue={replacements.notes || ''}
+              onBlur={(e) => onNotesChange(e.target.value)}
               rows={2}
               placeholder="E.g. species affected, location within zone, suggested replacements..."
               readOnly={readOnly}
@@ -1530,23 +1497,14 @@ function ZoneNameInput({ name, onBlur }) {
 // Setup form with local state per field — commits on blur to prevent
 // expensive re-renders on every keystroke.
 function SiteInfoForm({ siteInfo, onCommit }) {
-  const [local, setLocal] = useState({ ...siteInfo });
-  const prevRef = useRef(siteInfo);
-  useEffect(() => {
-    if (siteInfo !== prevRef.current) {
-      setLocal({ ...siteInfo });
-      prevRef.current = siteInfo;
-    }
-  });
-
   const field = (key, placeholder, type = 'text') => (
     <input
+      key={key + '|' + (siteInfo[key] || '')}
       type={type}
       className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-teal-400"
       placeholder={placeholder}
-      value={local[key] || ''}
-      onChange={(e) => setLocal((prev) => ({ ...prev, [key]: e.target.value }))}
-      onBlur={() => onCommit({ [key]: local[key] })}
+      defaultValue={siteInfo[key] || ''}
+      onBlur={(e) => onCommit({ [key]: e.target.value })}
     />
   );
 
@@ -1581,27 +1539,6 @@ function QAFlow({ record, onChange, onClose }) {
   const [addingZone, setAddingZone] = useState(false);
   const [pendingZoneName, setPendingZoneName] = useState('');
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
-
-  // Local zone summary text — sync when zone changes or summary is regenerated.
-  const [localZoneSummary, setLocalZoneSummary] = useState('');
-  useEffect(() => {
-    setLocalZoneSummary(currentZone?.summary || '');
-  }, [currentZoneIdx, currentZone?.summary]);
-  // re-rendering the whole app on every keystroke.
-  const [localSummary, setLocalSummary] = useState(record.overallSummary || '');
-  const [localActionPoints, setLocalActionPoints] = useState(record.actionPoints || []);
-  const prevSummaryRef = useRef(record.overallSummary);
-  const prevActionPointsRef = useRef(record.actionPoints);
-  useEffect(() => {
-    if (record.overallSummary !== prevSummaryRef.current) {
-      setLocalSummary(record.overallSummary || '');
-      prevSummaryRef.current = record.overallSummary;
-    }
-    if (record.actionPoints !== prevActionPointsRef.current) {
-      setLocalActionPoints(record.actionPoints || []);
-      prevActionPointsRef.current = record.actionPoints;
-    }
-  }, [record.overallSummary, record.actionPoints]);
 
   useEffect(() => {
     loadJsPDF().catch(() => {});
@@ -1739,7 +1676,6 @@ function QAFlow({ record, onChange, onClose }) {
     const zone = record.zones[zoneIdx];
     const summary = generateSummary(zone);
     updateZone(zoneIdx, (z) => ({ ...z, summary }));
-    if (zoneIdx === currentZoneIdx) setLocalZoneSummary(summary);
   };
 
   const handleExport = async () => {
@@ -2027,9 +1963,9 @@ function QAFlow({ record, onChange, onClose }) {
               )}
             </div>
             <textarea
-              value={localZoneSummary}
-              onChange={(e) => setLocalZoneSummary(e.target.value)}
-              onBlur={() => updateZone(currentZoneIdx, (z) => ({ ...z, summary: localZoneSummary }))}
+              key={currentZoneIdx + '|' + currentZone.summary}
+              defaultValue={currentZone.summary || ''}
+              onBlur={(e) => updateZone(currentZoneIdx, (z) => ({ ...z, summary: e.target.value }))}
               rows={8}
               readOnly={readOnly}
               className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400 leading-relaxed"
@@ -2081,7 +2017,7 @@ function QAFlow({ record, onChange, onClose }) {
               </p>
               {!readOnly && (
                 <button
-                  onClick={() => { const s = generateOverallSummary(record.zones, record.siteInfo.site); setLocalSummary(s); update({ overallSummary: s }); }}
+                  onClick={() => update({ overallSummary: generateOverallSummary(record.zones, record.siteInfo.site) })}
                   className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
                 >
                   <RefreshCw size={11} /> Regenerate
@@ -2089,9 +2025,9 @@ function QAFlow({ record, onChange, onClose }) {
               )}
             </div>
             <textarea
-              value={localSummary}
-              onChange={(e) => setLocalSummary(e.target.value)}
-              onBlur={() => update({ overallSummary: localSummary })}
+              key={record.overallSummary}
+              defaultValue={record.overallSummary || ''}
+              onBlur={(e) => update({ overallSummary: e.target.value })}
               rows={8}
               readOnly={readOnly}
               className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400 leading-relaxed"
@@ -2105,28 +2041,28 @@ function QAFlow({ record, onChange, onClose }) {
               </p>
               {!readOnly && (
                 <button
-                  onClick={() => { const pts = generateActionPoints(record.zones); setLocalActionPoints(pts); update({ actionPoints: pts }); }}
+                  onClick={() => update({ actionPoints: generateActionPoints(record.zones) })}
                   className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
                 >
                   <RefreshCw size={11} /> Regenerate
                 </button>
               )}
             </div>
-            {localActionPoints.length === 0 ? (
+            {record.actionPoints.length === 0 ? (
               <p className="text-sm text-slate-400 italic py-1">No action points yet.</p>
             ) : (
               <div className="space-y-2">
-                {localActionPoints.map((point, idx) => (
+                {record.actionPoints.map((point, idx) => (
                   <div key={idx} className="flex items-start gap-2">
                     <span className="text-slate-400 mt-2.5 text-xs">&bull;</span>
                     <textarea
-                      value={point}
-                      onChange={(e) => {
-                        const next = [...localActionPoints];
+                      key={idx + '|' + point}
+                      defaultValue={point || ''}
+                      onBlur={(e) => {
+                        const next = [...record.actionPoints];
                         next[idx] = e.target.value;
-                        setLocalActionPoints(next);
+                        update({ actionPoints: next });
                       }}
-                      onBlur={() => update({ actionPoints: localActionPoints })}
                       rows={1}
                       readOnly={readOnly}
                       className="flex-1 text-sm text-slate-700 border border-slate-200 rounded-lg p-2 resize-none focus:outline-none focus:ring-1 focus:ring-teal-400 leading-snug"
@@ -2134,8 +2070,7 @@ function QAFlow({ record, onChange, onClose }) {
                     {!readOnly && (
                       <button
                         onClick={() => {
-                          const next = localActionPoints.filter((_, i) => i !== idx);
-                          setLocalActionPoints(next);
+                          const next = record.actionPoints.filter((_, i) => i !== idx);
                           update({ actionPoints: next });
                         }}
                         aria-label="Remove action point"
@@ -2150,7 +2085,7 @@ function QAFlow({ record, onChange, onClose }) {
             )}
             {!readOnly && (
               <button
-                onClick={() => { const next = [...localActionPoints, '']; setLocalActionPoints(next); update({ actionPoints: next }); }}
+                onClick={() => update({ actionPoints: [...record.actionPoints, ''] })}
                 className="mt-2 w-full flex items-center justify-center gap-2 text-sm text-slate-500 border border-dashed border-slate-300 rounded-lg py-2 hover:bg-slate-50"
               >
                 <Plus size={14} /> Add action point
@@ -2204,8 +2139,6 @@ function QAFlow({ record, onChange, onClose }) {
               if (!record.actionPoints || record.actionPoints.length === 0) patch.actionPoints = generateActionPoints(record.zones);
               if (Object.keys(patch).length > 0) {
                 update(patch);
-                if (patch.overallSummary) setLocalSummary(patch.overallSummary);
-                if (patch.actionPoints) setLocalActionPoints(patch.actionPoints);
               }
               setScreen('sitesummary');
             }}
