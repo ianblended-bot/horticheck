@@ -927,7 +927,8 @@ const PDF_COLORS = {
   No: [100, 116, 139],
 };
 
-async function exportQAPdf(record) {
+async function exportQAPdf(record, options = {}) {
+  const { includeRatings = true } = options;
   const jsPDF = await loadJsPDF();
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageW = 210;
@@ -1074,45 +1075,52 @@ async function exportQAPdf(record) {
     doc.text(zone.name, margin, y);
     y += 8;
 
-    doc.setFontSize(10);
-    CATEGORIES.forEach((c) => {
-      const entry = zone.categories[c.id];
-      doc.setFont(undefined, 'normal');
-      doc.setTextColor(60, 60, 60);
-      doc.text(c.label, margin, y);
-      const rating = entry.rating || 'Not assessed';
-      const col = PDF_COLORS[rating];
-      doc.setTextColor(...col);
-      doc.setFont(undefined, 'bold');
-      doc.text(rating, pageW - margin, y, { align: 'right' });
-      y += 6;
-    });
-
-    if (zone.replacements && zone.replacements.count > 0) {
-      doc.setFont(undefined, 'normal');
-      doc.setTextColor(60, 60, 60);
-      doc.text('Replacements required', margin, y);
-      doc.setTextColor(...PDF_COLORS['Below standard']);
-      doc.setFont(undefined, 'bold');
-      doc.text(String(zone.replacements.count), pageW - margin, y, { align: 'right' });
-      y += 6;
+    if (!includeRatings) {
+      doc.setDrawColor(220, 220, 220);
+      doc.line(margin, y, pageW - margin, y);
+      y += 8;
     }
 
-    const hazardEntry = zone.categories[HAZARD_CATEGORY.id];
-    if (hazardEntry && hazardEntry.rating) {
-      doc.setFont(undefined, 'normal');
-      doc.setTextColor(60, 60, 60);
-      doc.text(HAZARD_CATEGORY.question, margin, y);
-      doc.setTextColor(...PDF_COLORS[hazardEntry.rating]);
-      doc.setFont(undefined, 'bold');
-      doc.text(hazardEntry.rating, pageW - margin, y, { align: 'right' });
-      y += 6;
-    }
+    if (includeRatings) {
+      doc.setFontSize(10);
+      CATEGORIES.forEach((c) => {
+        const entry = zone.categories[c.id];
+        doc.setFont(undefined, 'normal');
+        doc.setTextColor(60, 60, 60);
+        doc.text(c.label, margin, y);
+        const rating = entry.rating || 'Not assessed';
+        doc.setTextColor(...PDF_COLORS[rating]);
+        doc.setFont(undefined, 'bold');
+        doc.text(rating, pageW - margin, y, { align: 'right' });
+        y += 6;
+      });
 
-    y += 4;
-    doc.setDrawColor(220, 220, 220);
-    doc.line(margin, y, pageW - margin, y);
-    y += 8;
+      if (zone.replacements && zone.replacements.count > 0) {
+        doc.setFont(undefined, 'normal');
+        doc.setTextColor(60, 60, 60);
+        doc.text('Replacements required', margin, y);
+        doc.setTextColor(...PDF_COLORS['Below standard']);
+        doc.setFont(undefined, 'bold');
+        doc.text(String(zone.replacements.count), pageW - margin, y, { align: 'right' });
+        y += 6;
+      }
+
+      const hazardEntry = zone.categories[HAZARD_CATEGORY.id];
+      if (hazardEntry && hazardEntry.rating) {
+        doc.setFont(undefined, 'normal');
+        doc.setTextColor(60, 60, 60);
+        doc.text(HAZARD_CATEGORY.question, margin, y);
+        doc.setTextColor(...PDF_COLORS[hazardEntry.rating]);
+        doc.setFont(undefined, 'bold');
+        doc.text(hazardEntry.rating, pageW - margin, y, { align: 'right' });
+        y += 6;
+      }
+
+      y += 4;
+      doc.setDrawColor(220, 220, 220);
+      doc.line(margin, y, pageW - margin, y);
+      y += 8;
+    }
 
     doc.setFont(undefined, 'bold');
     doc.setFontSize(11);
@@ -1535,6 +1543,7 @@ function QAFlow({ record, onChange, onClose }) {
   const [expandedCat, setExpandedCat] = useState(null);
   const [annotating, setAnnotating] = useState(null);
   const [exporting, setExporting] = useState(false);
+  const [includeRatings, setIncludeRatings] = useState(true);
   const [newZoneName, setNewZoneName] = useState('');
   const [addingZone, setAddingZone] = useState(false);
   const [pendingZoneName, setPendingZoneName] = useState('');
@@ -1681,7 +1690,7 @@ function QAFlow({ record, onChange, onClose }) {
   const handleExport = async () => {
     setExporting(true);
     try {
-      await exportQAPdf(record);
+      await exportQAPdf(record, { includeRatings });
     } catch (e) {
       alert('Could not generate the PDF. Please try again.');
     } finally {
@@ -2189,6 +2198,16 @@ function QAFlow({ record, onChange, onClose }) {
               </button>
             )}
           </div>
+
+          <button
+            onClick={() => setIncludeRatings((v) => !v)}
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600"
+          >
+            <span>Include ratings in PDF</span>
+            <span className={`w-10 h-6 rounded-full flex items-center transition-colors flex-shrink-0 ${includeRatings ? 'bg-teal-600' : 'bg-slate-200'}`}>
+              <span className={`w-5 h-5 bg-white rounded-full shadow transition-transform mx-0.5 ${includeRatings ? 'translate-x-4' : 'translate-x-0'}`} />
+            </span>
+          </button>
 
           {showSubmitConfirm && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
