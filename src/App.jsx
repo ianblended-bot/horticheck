@@ -163,6 +163,7 @@ function newZone(name) {
 }
 
 function generateSummary(zone) {
+  if (!zone.categories) return '';
   const parts = [];
   CATEGORIES.forEach((c) => {
     const entry = zone.categories[c.id];
@@ -197,6 +198,7 @@ function generateSummary(zone) {
 
 function ratingCounts(zone) {
   const counts = { Excellent: 0, Good: 0, Fair: 0, 'Below standard': 0 };
+  if (!zone.categories) return counts;
   CATEGORIES.forEach((c) => {
     const entry = zone.categories[c.id];
     if (entry && entry.rating) counts[entry.rating] += 1;
@@ -316,6 +318,7 @@ function generateActionPoints(zones) {
 }
 
 function zoneProgress(zone) {
+  if (!zone.categories) return 0;
   let done = 0;
   CATEGORIES.forEach((c) => {
     if (zone.categories[c.id] && zone.categories[c.id].rating) done += 1;
@@ -3064,7 +3067,15 @@ export default function HortiCheckApp() {
     loadRecords().then((saved) => {
       if (cancelled) return;
       if (saved && Array.isArray(saved) && saved.length > 0) {
-        setRecords(saved.map(migrateRecord));
+        const migrated = saved.reduce((acc, r) => {
+          try {
+            acc.push(migrateRecord(r));
+          } catch (e) {
+            console.error('Failed to migrate record, skipping:', r.id, e);
+          }
+          return acc;
+        }, []);
+        setRecords(migrated.length > 0 ? migrated : saved);
       } else {
         // First run / nothing saved yet — seed with a sample record.
         const sample = newQARecord({
