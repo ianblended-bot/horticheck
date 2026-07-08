@@ -3005,34 +3005,58 @@ export default function HortiCheckApp() {
     return { ...rest, flagType: flagged ? 'issue' : null };
   };
 
-  const migrateRecord = (r) => ({
-    actionPoints: [],
-    ...r,
-    zones: (r.zones || []).map((z) => {
-      const migratedCategories = Object.fromEntries(
-        Object.entries(z.categories || {}).map(([key, entry]) => [
-          key,
-          { ...entry, photos: (entry.photos || []).map(migratePhoto) },
-        ])
-      );
-      // Backfill any categories (e.g. Display quality, Health & safety) that
-      // didn't exist yet when this record was originally created.
-      [...CATEGORIES, HAZARD_CATEGORY].forEach((c) => {
-        if (!migratedCategories[c.id]) {
-          migratedCategories[c.id] = { rating: null, feedback: '', notes: '', photos: [] };
-        }
-      });
+  const migrateRecord = (r) => {
+    const base = { actionPoints: [], ...r };
+
+    if (r.module === 'sa') {
       return {
-        ...z,
-        // SA zone: ensure zonePhotos exists
-        zonePhotos: (z.zonePhotos || []).map(migratePhoto),
-        categories: migratedCategories,
-        replacements: z.replacements
-          ? { ...z.replacements, photos: (z.replacements.photos || []).map(migratePhoto) }
-          : z.replacements,
+        ...base,
+        overallNotes: r.overallNotes || '',
+        zones: (r.zones || []).map((z) => ({
+          plants: '',
+          containers: '',
+          pests: null,
+          pestPhotos: [],
+          replacements: '',
+          replacementPhotos: [],
+          notes: '',
+          notePhotos: [],
+          zonePhotos: [],
+          summary: '',
+          ...z,
+          pestPhotos: (z.pestPhotos || []).map(migratePhoto),
+          replacementPhotos: (z.replacementPhotos || []).map(migratePhoto),
+          notePhotos: (z.notePhotos || []).map(migratePhoto),
+          zonePhotos: (z.zonePhotos || []).map(migratePhoto),
+        })),
       };
-    }),
-  });
+    }
+
+    // QA record migration
+    return {
+      ...base,
+      zones: (r.zones || []).map((z) => {
+        const migratedCategories = Object.fromEntries(
+          Object.entries(z.categories || {}).map(([key, entry]) => [
+            key,
+            { ...entry, photos: (entry.photos || []).map(migratePhoto) },
+          ])
+        );
+        [...CATEGORIES, HAZARD_CATEGORY].forEach((c) => {
+          if (!migratedCategories[c.id]) {
+            migratedCategories[c.id] = { rating: null, feedback: '', notes: '', photos: [] };
+          }
+        });
+        return {
+          ...z,
+          categories: migratedCategories,
+          replacements: z.replacements
+            ? { ...z.replacements, photos: (z.replacements.photos || []).map(migratePhoto) }
+            : z.replacements,
+        };
+      }),
+    };
+  };
 
   // Load saved records from IndexedDB on first mount.
   useEffect(() => {
