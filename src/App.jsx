@@ -3006,9 +3006,9 @@ export default function HortiCheckApp() {
   };
 
   const migrateRecord = (r) => {
-    const base = { actionPoints: [], ...r };
+    const base = { actionPoints: [], module: 'qa', ...r };
 
-    if (r.module === 'sa') {
+    if (base.module === 'sa') {
       return {
         ...base,
         overallNotes: r.overallNotes || '',
@@ -3032,7 +3032,7 @@ export default function HortiCheckApp() {
       };
     }
 
-    // QA record migration
+    // QA record migration (default)
     return {
       ...base,
       zones: (r.zones || []).map((z) => {
@@ -3052,7 +3052,7 @@ export default function HortiCheckApp() {
           categories: migratedCategories,
           replacements: z.replacements
             ? { ...z.replacements, photos: (z.replacements.photos || []).map(migratePhoto) }
-            : z.replacements,
+            : { count: 0, notes: '', photos: [] },
         };
       }),
     };
