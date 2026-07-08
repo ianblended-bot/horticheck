@@ -4,7 +4,7 @@ import {
   Plus, ArrowLeft, MapPin, Trash2, Camera, Flag, Pencil, ChevronDown,
   ChevronRight, Download, RefreshCw, Save, X, Calendar as CalendarIcon,
   List as ListIcon, Clock, CheckCircle2, PlayCircle, Image as ImageIcon,
-  Minus, ThumbsUp
+  Minus, ThumbsUp, Search, Sparkles, Sun, Droplets, Thermometer, Info
 } from 'lucide-react';
 import { loadRecords, saveRecords } from './storage';
 
@@ -17,7 +17,7 @@ const MODULES = {
   sa: { label: 'SA', fullLabel: 'Site audit', icon: ClipboardList, color: '#185FA5', bg: '#E6F1FB', text: '#0C447C' },
   ra: { label: 'RA', fullLabel: 'Risk assessment', icon: AlertTriangle, color: '#854F0B', bg: '#FAEEDA', text: '#633806' },
   pest: { label: 'Pest ID', fullLabel: 'Pest identification & control', icon: Bug, color: '#A32D2D', bg: '#FCEBEB', text: '#791F1F' },
-  plantscore: { label: 'PlantScore', fullLabel: 'Plant & display scoring', icon: Leaf, color: '#5F5E5A', bg: '#F1EFE8', text: '#444441' },
+  plantid: { label: 'Plant ID', fullLabel: 'Plant identification', icon: Leaf, color: '#5F5E5A', bg: '#F1EFE8', text: '#444441' },
 };
 
 const RATINGS = ['Excellent', 'Good', 'Fair', 'Below standard'];
@@ -1269,7 +1269,7 @@ async function exportQAPdf(record, options = {}) {
    Dashboard
 --------------------------------------------------------------- */
 
-function Dashboard({ records, onNewQA, onNewSA, onOpenRecord, onOpenModuleStub, onDeleteRecord }) {
+function Dashboard({ records, onNewQA, onNewSA, onOpenPlantID, onOpenRecord, onOpenModuleStub, onDeleteRecord }) {
   const [view, setView] = useState('list'); // list | calendar
 
   const scheduled = records.filter((r) => r.status === 'scheduled');
@@ -1350,7 +1350,7 @@ function Dashboard({ records, onNewQA, onNewSA, onOpenRecord, onOpenModuleStub, 
           return (
             <button
               key={key}
-              onClick={() => key === 'qa' ? onNewQA() : key === 'sa' ? onNewSA() : onOpenModuleStub(key)}
+              onClick={() => key === 'qa' ? onNewQA() : key === 'sa' ? onNewSA() : key === 'plantid' ? onOpenPlantID() : onOpenModuleStub(key)}
               className="flex flex-col items-center gap-1.5 py-3 px-1 rounded-xl border border-slate-200 hover:border-slate-300 bg-white text-center"
             >
               <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: mod.bg, color: mod.text }}>
@@ -2966,6 +2966,308 @@ function SAFlow({ record, onChange, onClose }) {
    Stub screen for not-yet-built modules
 --------------------------------------------------------------- */
 
+/* ---------------------------------------------------------------
+   Plant ID — AI-powered plant identification
+--------------------------------------------------------------- */
+
+const PLANT_ID_ACCENT = '#3D6B35';
+
+function PlantIDFlow({ onClose }) {
+  const [image, setImage] = useState(null);       // { src, base64, mediaType }
+  const [status, setStatus] = useState('idle');   // idle | loading | result | error
+  const [result, setResult] = useState(null);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [activeTab, setActiveTab] = useState('overview');
+  const cameraRef = useRef(null);
+  const galleryRef = useRef(null);
+
+  const handleFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      const base64 = dataUrl.split(',')[1];
+      const mediaType = file.type || 'image/jpeg';
+      setImage({ src: dataUrl, base64, mediaType });
+      setStatus('idle');
+      setResult(null);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const identify = async () => {
+    if (!image) return;
+    setStatus('loading');
+    setResult(null);
+    setErrorMsg('');
+    try {
+      const res = await fetch('/api/identify-plant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: image.base64, mediaType: image.mediaType }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Identification failed');
+      if (!data.identified) {
+        setStatus('error');
+        setErrorMsg('Could not identify a plant in this photo. Try a clearer image with the plant more prominent.');
+        return;
+      }
+      setResult(data);
+      setStatus('result');
+      setActiveTab('overview');
+    } catch (e) {
+      setStatus('error');
+      setErrorMsg(e.message || 'Something went wrong. Please try again.');
+    }
+  };
+
+  const reset = () => {
+    setImage(null);
+    setResult(null);
+    setStatus('idle');
+    setErrorMsg('');
+  };
+
+  const ACCENT = PLANT_ID_ACCENT;
+  const TABS = ['overview', 'care', 'display'];
+
+  return (
+    <div className="pb-6">
+      {/* Top bar */}
+      <div className="px-4 py-3 flex items-center justify-between border-b border-slate-200 bg-white sticky top-0 z-10">
+        <button onClick={onClose} className="text-xs text-slate-500 flex items-center gap-1">
+          <ArrowLeft size={14} /> Dashboard
+        </button>
+        <span className="text-sm font-medium text-slate-800 flex items-center gap-1.5">
+          <Leaf size={14} style={{ color: ACCENT }} /> Plant ID
+        </span>
+        {image && (
+          <button onClick={reset} className="text-xs text-slate-500">New search</button>
+        )}
+        {!image && <span className="w-16" />}
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Photo upload area */}
+        {!image ? (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500 text-center">Take or upload a photo of a plant to identify it</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => cameraRef.current.click()}
+                className="flex-1 flex flex-col items-center gap-2 py-8 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:bg-slate-50"
+              >
+                <Camera size={28} className="text-slate-400" />
+                <span className="text-sm font-medium">Take photo</span>
+              </button>
+              <button
+                onClick={() => galleryRef.current.click()}
+                className="flex-1 flex flex-col items-center gap-2 py-8 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:bg-slate-50"
+              >
+                <ImageIcon size={28} className="text-slate-400" />
+                <span className="text-sm font-medium">Upload photo</span>
+              </button>
+            </div>
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+              onChange={(e) => handleFile(e.target.files[0])} />
+            <input ref={galleryRef} type="file" accept="image/*" className="hidden"
+              onChange={(e) => handleFile(e.target.files[0])} />
+            <p className="text-xs text-slate-400 text-center">Best results: clear photo of leaves, flower or whole plant in good light</p>
+          </div>
+        ) : (
+          <>
+            {/* Image preview */}
+            <div className="relative rounded-xl overflow-hidden bg-slate-100">
+              <img src={image.src} alt="Plant to identify" className="w-full max-h-64 object-cover" />
+              {status === 'idle' && (
+                <button onClick={reset} className="absolute top-2 right-2 w-7 h-7 bg-black/50 rounded-full flex items-center justify-center text-white">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            {/* Identify button */}
+            {status === 'idle' && (
+              <button
+                onClick={identify}
+                style={{ background: ACCENT }}
+                className="w-full py-3 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2"
+              >
+                <Search size={16} /> Identify plant
+              </button>
+            )}
+
+            {/* Loading state */}
+            {status === 'loading' && (
+              <div className="flex flex-col items-center gap-3 py-6">
+                <div className="w-10 h-10 rounded-full border-4 border-slate-200 border-t-green-600 animate-spin" />
+                <p className="text-sm text-slate-500">Analysing plant...</p>
+              </div>
+            )}
+
+            {/* Error */}
+            {status === 'error' && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-3">
+                <p className="text-sm text-red-700">{errorMsg}</p>
+                <button onClick={() => setStatus('idle')} className="text-sm text-red-600 font-medium underline">Try again</button>
+              </div>
+            )}
+
+            {/* Result */}
+            {status === 'result' && result && (
+              <div className="space-y-3">
+                {/* Header card */}
+                <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                  <div className="p-4" style={{ background: `${ACCENT}12` }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h2 className="text-lg font-bold text-slate-800">{result.commonName}</h2>
+                        <p className="text-sm italic text-slate-500">{result.scientificName}</p>
+                      </div>
+                      <span className={`flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full ${
+                        result.confidence === 'High' ? 'bg-green-100 text-green-700' :
+                        result.confidence === 'Medium' ? 'bg-amber-100 text-amber-700' :
+                        'bg-slate-100 text-slate-600'
+                      }`}>
+                        {result.confidence} confidence
+                      </span>
+                    </div>
+                    {result.summary && (
+                      <p className="text-sm text-slate-600 mt-2 leading-relaxed">{result.summary}</p>
+                    )}
+                  </div>
+
+                  {/* Alternatives */}
+                  {result.alternatives && result.alternatives.length > 0 && (
+                    <div className="px-4 py-3 border-t border-slate-100">
+                      <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Could also be</p>
+                      <div className="space-y-1">
+                        {result.alternatives.map((alt, i) => (
+                          <div key={i} className="flex items-baseline gap-2">
+                            <span className="text-sm text-slate-700 font-medium">{alt.commonName}</span>
+                            <span className="text-xs italic text-slate-400">{alt.scientificName}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Tabs */}
+                <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+                  {TABS.map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
+                      className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors ${
+                        activeTab === tab ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'
+                      }`}
+                    >
+                      {tab === 'overview' ? 'Overview' : tab === 'care' ? 'Care guide' : 'Display ideas'}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Overview tab — summary + light/water quick facts */}
+                {activeTab === 'overview' && result.care && (
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex items-start gap-2">
+                        <Sun size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs text-slate-400">Light</p>
+                          <p className="text-sm text-slate-700">{result.care.light}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Droplets size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs text-slate-400">Watering</p>
+                          <p className="text-sm text-slate-700">{result.care.watering}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Thermometer size={16} className="text-red-400 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs text-slate-400">Temperature</p>
+                          <p className="text-sm text-slate-700">{result.care.temperature}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Info size={16} className="text-slate-400 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs text-slate-400">Humidity</p>
+                          <p className="text-sm text-slate-700">{result.care.humidity}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Care guide tab */}
+                {activeTab === 'care' && result.care && (
+                  <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
+                    {[
+                      ['Light', result.care.light],
+                      ['Watering', result.care.watering],
+                      ['Humidity', result.care.humidity],
+                      ['Temperature', result.care.temperature],
+                      ['Feeding', result.care.feeding],
+                      ['Notes', result.care.notes],
+                    ].filter(([, v]) => v).map(([label, value]) => (
+                      <div key={label} className="px-4 py-3">
+                        <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-0.5">{label}</p>
+                        <p className="text-sm text-slate-700">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Display ideas tab */}
+                {activeTab === 'display' && result.displayTips && (
+                  <div className="space-y-3">
+                    {result.displayTips.positioning && (
+                      <div className="bg-white border border-slate-200 rounded-xl p-4">
+                        <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Best positioning</p>
+                        <p className="text-sm text-slate-700">{result.displayTips.positioning}</p>
+                      </div>
+                    )}
+                    {result.displayTips.companions && result.displayTips.companions.length > 0 && (
+                      <div className="bg-white border border-slate-200 rounded-xl p-4">
+                        <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Companion plants</p>
+                        <div className="flex flex-wrap gap-2">
+                          {result.displayTips.companions.map((c, i) => (
+                            <span key={i} className="text-xs px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">{c}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {result.displayTips.displayIdeas && (
+                      <div className="bg-white border border-slate-200 rounded-xl p-4">
+                        <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Mixed display ideas</p>
+                        <p className="text-sm text-slate-700">{result.displayTips.displayIdeas}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* New search */}
+                <button
+                  onClick={reset}
+                  className="w-full py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600 flex items-center justify-center gap-2"
+                >
+                  <Search size={14} /> Identify another plant
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ModuleStub({ moduleKey, onClose }) {
   const mod = MODULES[moduleKey];
   const Icon = mod.icon;
@@ -3152,6 +3454,7 @@ export default function HortiCheckApp() {
           records={records}
           onNewQA={newQA}
           onNewSA={newSA}
+          onOpenPlantID={() => setView({ screen: 'plantid' })}
           onOpenRecord={openRecord}
           onOpenModuleStub={(key) => setView({ screen: 'stub', module: key })}
           onDeleteRecord={(id, siteName, status) => deleteRecord(id, siteName, status)}
@@ -3170,6 +3473,9 @@ export default function HortiCheckApp() {
           onChange={(updated) => updateRecord(view.id, updated)}
           onClose={() => setView({ screen: 'dashboard' })}
         />
+      )}
+      {view.screen === 'plantid' && (
+        <PlantIDFlow onClose={() => setView({ screen: 'dashboard' })} />
       )}
       {view.screen === 'stub' && (
         <ModuleStub moduleKey={view.module} onClose={() => setView({ screen: 'dashboard' })} />
