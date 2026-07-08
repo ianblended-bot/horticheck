@@ -8,6 +8,44 @@ import {
 } from 'lucide-react';
 import { loadRecords, saveRecords } from './storage';
 
+// Separate IndexedDB helpers for the Plant ID library (stored under a
+// different key so it doesn't interfere with the QA/SA records array).
+async function openPlantLibrary() {
+  const db = await new Promise((resolve, reject) => {
+    const req = indexedDB.open('horticheck', 1);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+    req.onupgradeneeded = (e) => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('records')) d.createObjectStore('records');
+    };
+  });
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('records', 'readonly');
+    const req = tx.objectStore('records').get('plantLibrary');
+    req.onsuccess = () => resolve(req.result ?? []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function savePlantLibrary(lib) {
+  const db = await new Promise((resolve, reject) => {
+    const req = indexedDB.open('horticheck', 1);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+    req.onupgradeneeded = (e) => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('records')) d.createObjectStore('records');
+    };
+  });
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('records', 'readwrite');
+    const req = tx.objectStore('records').put(lib, 'plantLibrary');
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
 /* ---------------------------------------------------------------
    Shared constants
 --------------------------------------------------------------- */
@@ -2973,13 +3011,26 @@ function SAFlow({ record, onChange, onClose }) {
 const PLANT_ID_ACCENT = '#3D6B35';
 
 function PlantIDFlow({ onClose }) {
-  const [image, setImage] = useState(null);       // { src, base64, mediaType }
+  const [view, setView] = useState('identify');   // identify | history | detail
+  const [image, setImage] = useState(null);
   const [status, setStatus] = useState('idle');   // idle | loading | result | error
   const [result, setResult] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
+  const [saved, setSaved] = useState(false);
+  const [library, setLibrary] = useState([]);
+  const [selectedEntry, setSelectedEntry] = useState(null);
   const cameraRef = useRef(null);
   const galleryRef = useRef(null);
+
+  // Load library from IndexedDB on mount
+  useEffect(() => {
+    openPlantLibrary().then(setLibrary).catch(() => {});
+  }, []);
+
+  const saveLibrary = async (lib) => {
+    try { await savePlantLibrary(lib); } catch (e) {}
+  };
 
   const handleFile = (file) => {
     if (!file) return;
@@ -2991,6 +3042,7 @@ function PlantIDFlow({ onClose }) {
       setImage({ src: dataUrl, base64, mediaType });
       setStatus('idle');
       setResult(null);
+      setSaved(false);
     };
     reader.readAsDataURL(file);
   };
@@ -3000,6 +3052,7 @@ function PlantIDFlow({ onClose }) {
     setStatus('loading');
     setResult(null);
     setErrorMsg('');
+    setSaved(false);
     try {
       const res = await fetch('/api/identify-plant', {
         method: 'POST',
@@ -3022,252 +3075,298 @@ function PlantIDFlow({ onClose }) {
     }
   };
 
+  const saveToLibrary = async () => {
+    if (!result || saved) return;
+    const entry = {
+      id: `pid-${Date.now()}`,
+      date: new Date().toISOString().slice(0, 10),
+      imageSrc: image?.src || null,
+      result,
+    };
+    const updated = [entry, ...library];
+    setLibrary(updated);
+    setSaved(true);
+    await saveLibrary(updated);
+  };
+
+  const deleteFromLibrary = async (id) => {
+    const updated = library.filter((e) => e.id !== id);
+    setLibrary(updated);
+    await saveLibrary(updated);
+    if (selectedEntry?.id === id) { setSelectedEntry(null); setView('history'); }
+  };
+
   const reset = () => {
     setImage(null);
     setResult(null);
     setStatus('idle');
     setErrorMsg('');
+    setSaved(false);
   };
 
   const ACCENT = PLANT_ID_ACCENT;
   const TABS = ['overview', 'care', 'display'];
 
+  const ResultCard = ({ res, imgSrc, showSaveButton = false }) => (
+    <div className="space-y-3">
+      {imgSrc && (
+        <div className="rounded-xl overflow-hidden bg-slate-100">
+          <img src={imgSrc} alt="Plant" className="w-full max-h-56 object-cover" />
+        </div>
+      )}
+      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <div className="p-4" style={{ background: `${ACCENT}12` }}>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">{res.commonName}</h2>
+              <p className="text-sm italic text-slate-500">{res.scientificName}</p>
+            </div>
+            <span className={`flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full ${
+              res.confidence === 'High' ? 'bg-green-100 text-green-700' :
+              res.confidence === 'Medium' ? 'bg-amber-100 text-amber-700' :
+              'bg-slate-100 text-slate-600'
+            }`}>
+              {res.confidence} confidence
+            </span>
+          </div>
+          {res.summary && <p className="text-sm text-slate-600 mt-2 leading-relaxed">{res.summary}</p>}
+        </div>
+        {res.alternatives && res.alternatives.length > 0 && (
+          <div className="px-4 py-3 border-t border-slate-100">
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Could also be</p>
+            <div className="space-y-1">
+              {res.alternatives.map((alt, i) => (
+                <div key={i} className="flex items-baseline gap-2">
+                  <span className="text-sm text-slate-700 font-medium">{alt.commonName}</span>
+                  <span className="text-xs italic text-slate-400">{alt.scientificName}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+        {TABS.map((tab) => (
+          <button key={tab} onClick={() => setActiveTab(tab)}
+            className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors ${activeTab === tab ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>
+            {tab === 'overview' ? 'Overview' : tab === 'care' ? 'Care guide' : 'Display ideas'}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'overview' && res.care && (
+        <div className="bg-white border border-slate-200 rounded-xl p-4 grid grid-cols-2 gap-3">
+          {[['Light', res.care.light, <Sun size={16} className="text-amber-500" />],
+            ['Watering', res.care.watering, <Droplets size={16} className="text-blue-500" />],
+            ['Temperature', res.care.temperature, <Thermometer size={16} className="text-red-400" />],
+            ['Humidity', res.care.humidity, <Info size={16} className="text-slate-400" />],
+          ].map(([label, value, icon]) => value ? (
+            <div key={label} className="flex items-start gap-2">
+              <span className="flex-shrink-0 mt-0.5">{icon}</span>
+              <div><p className="text-xs text-slate-400">{label}</p><p className="text-sm text-slate-700">{value}</p></div>
+            </div>
+          ) : null)}
+        </div>
+      )}
+
+      {activeTab === 'care' && res.care && (
+        <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
+          {[['Light', res.care.light], ['Watering', res.care.watering], ['Humidity', res.care.humidity],
+            ['Temperature', res.care.temperature], ['Feeding', res.care.feeding], ['Notes', res.care.notes],
+          ].filter(([, v]) => v).map(([label, value]) => (
+            <div key={label} className="px-4 py-3">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-0.5">{label}</p>
+              <p className="text-sm text-slate-700">{value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {activeTab === 'display' && res.displayTips && (
+        <div className="space-y-3">
+          {res.displayTips.positioning && (
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Best positioning</p>
+              <p className="text-sm text-slate-700">{res.displayTips.positioning}</p>
+            </div>
+          )}
+          {res.displayTips.companions?.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Companion plants</p>
+              <div className="flex flex-wrap gap-2">
+                {res.displayTips.companions.map((c, i) => (
+                  <span key={i} className="text-xs px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">{c}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {res.displayTips.displayIdeas && (
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Mixed display ideas</p>
+              <p className="text-sm text-slate-700">{res.displayTips.displayIdeas}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showSaveButton && (
+        <button
+          onClick={saveToLibrary}
+          disabled={saved}
+          style={!saved ? { background: ACCENT } : {}}
+          className={`w-full py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2 ${saved ? 'bg-green-50 text-green-700 border border-green-200' : 'text-white'}`}
+        >
+          {saved ? <><CheckCircle2 size={15} /> Saved to library</> : <><Save size={15} /> Save to library</>}
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className="pb-6">
       {/* Top bar */}
       <div className="px-4 py-3 flex items-center justify-between border-b border-slate-200 bg-white sticky top-0 z-10">
-        <button onClick={onClose} className="text-xs text-slate-500 flex items-center gap-1">
-          <ArrowLeft size={14} /> Dashboard
+        <button
+          onClick={view === 'identify' ? onClose : () => { setView('identify'); setSelectedEntry(null); }}
+          className="text-xs text-slate-500 flex items-center gap-1"
+        >
+          <ArrowLeft size={14} /> {view === 'identify' ? 'Dashboard' : 'Back'}
         </button>
         <span className="text-sm font-medium text-slate-800 flex items-center gap-1.5">
-          <Leaf size={14} style={{ color: ACCENT }} /> Plant ID
+          <Leaf size={14} style={{ color: ACCENT }} />
+          {view === 'history' ? 'Plant library' : view === 'detail' ? selectedEntry?.result?.commonName || 'Plant ID' : 'Plant ID'}
         </span>
-        {image && (
-          <button onClick={reset} className="text-xs text-slate-500">New search</button>
+        {view === 'identify' ? (
+          <button onClick={() => setView('history')} className="text-xs text-slate-500 flex items-center gap-1">
+            <ListIcon size={13} /> Library {library.length > 0 && `(${library.length})`}
+          </button>
+        ) : (
+          <span className="w-16" />
         )}
-        {!image && <span className="w-16" />}
       </div>
 
-      <div className="p-4 space-y-4">
-        {/* Photo upload area */}
-        {!image ? (
-          <div className="space-y-3">
-            <p className="text-sm text-slate-500 text-center">Take or upload a photo of a plant to identify it</p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => cameraRef.current.click()}
-                className="flex-1 flex flex-col items-center gap-2 py-8 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:bg-slate-50"
-              >
-                <Camera size={28} className="text-slate-400" />
-                <span className="text-sm font-medium">Take photo</span>
-              </button>
-              <button
-                onClick={() => galleryRef.current.click()}
-                className="flex-1 flex flex-col items-center gap-2 py-8 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:bg-slate-50"
-              >
-                <ImageIcon size={28} className="text-slate-400" />
-                <span className="text-sm font-medium">Upload photo</span>
+      {/* History / library screen */}
+      {view === 'history' && (
+        <div className="p-4 space-y-3">
+          {library.length === 0 ? (
+            <div className="text-center py-12 space-y-2">
+              <Leaf size={32} className="mx-auto text-slate-300" />
+              <p className="text-sm text-slate-400">No plants saved yet.</p>
+              <p className="text-xs text-slate-400">After identifying a plant, tap "Save to library" to keep it here.</p>
+              <button onClick={() => setView('identify')} style={{ color: ACCENT }} className="text-sm font-medium mt-2">
+                Identify a plant →
               </button>
             </div>
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-              onChange={(e) => handleFile(e.target.files[0])} />
-            <input ref={galleryRef} type="file" accept="image/*" className="hidden"
-              onChange={(e) => handleFile(e.target.files[0])} />
-            <p className="text-xs text-slate-400 text-center">Best results: clear photo of leaves, flower or whole plant in good light</p>
-          </div>
-        ) : (
-          <>
-            {/* Image preview */}
-            <div className="relative rounded-xl overflow-hidden bg-slate-100">
-              <img src={image.src} alt="Plant to identify" className="w-full max-h-64 object-cover" />
+          ) : (
+            library.map((entry) => (
+              <button
+                key={entry.id}
+                onClick={() => { setSelectedEntry(entry); setActiveTab('overview'); setView('detail'); }}
+                className="w-full bg-white border border-slate-200 rounded-xl p-3 flex items-center gap-3 text-left"
+              >
+                {entry.imageSrc ? (
+                  <img src={entry.imageSrc} alt="" className="w-14 h-14 rounded-lg object-cover flex-shrink-0" />
+                ) : (
+                  <div className="w-14 h-14 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+                    <Leaf size={22} className="text-slate-300" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-800 truncate">{entry.result.commonName}</p>
+                  <p className="text-xs italic text-slate-400 truncate">{entry.result.scientificName}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{new Date(entry.date + 'T00:00:00').toLocaleDateString('en-GB')}</p>
+                </div>
+                <ChevronRight size={16} className="text-slate-400 flex-shrink-0" />
+              </button>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Detail screen — saved entry */}
+      {view === 'detail' && selectedEntry && (
+        <div className="p-4 space-y-3">
+          <ResultCard res={selectedEntry.result} imgSrc={selectedEntry.imageSrc} />
+          <button
+            onClick={() => { if (window.confirm(`Remove ${selectedEntry.result.commonName} from your library?`)) deleteFromLibrary(selectedEntry.id); }}
+            className="w-full py-2.5 rounded-xl border border-red-200 text-sm text-red-500 flex items-center justify-center gap-2"
+          >
+            <Trash2 size={14} /> Remove from library
+          </button>
+        </div>
+      )}
+
+      {/* Identify screen */}
+      {view === 'identify' && (
+        <div className="p-4 space-y-4">
+          {!image ? (
+            <div className="space-y-3">
+              <p className="text-sm text-slate-500 text-center">Take or upload a photo of a plant to identify it</p>
+              <div className="flex gap-3">
+                <button onClick={() => cameraRef.current.click()}
+                  className="flex-1 flex flex-col items-center gap-2 py-8 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:bg-slate-50">
+                  <Camera size={28} className="text-slate-400" />
+                  <span className="text-sm font-medium">Take photo</span>
+                </button>
+                <button onClick={() => galleryRef.current.click()}
+                  className="flex-1 flex flex-col items-center gap-2 py-8 rounded-xl border-2 border-dashed border-slate-300 text-slate-500 hover:bg-slate-50">
+                  <ImageIcon size={28} className="text-slate-400" />
+                  <span className="text-sm font-medium">Upload photo</span>
+                </button>
+              </div>
+              <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handleFile(e.target.files[0])} />
+              <input ref={galleryRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e.target.files[0])} />
+              <p className="text-xs text-slate-400 text-center">Best results: clear photo of leaves, flower or whole plant in good light</p>
+            </div>
+          ) : (
+            <>
+              <div className="relative rounded-xl overflow-hidden bg-slate-100">
+                <img src={image.src} alt="Plant to identify" className="w-full max-h-64 object-cover" />
+                {status === 'idle' && (
+                  <button onClick={reset} className="absolute top-2 right-2 w-7 h-7 bg-black/50 rounded-full flex items-center justify-center text-white">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+
               {status === 'idle' && (
-                <button onClick={reset} className="absolute top-2 right-2 w-7 h-7 bg-black/50 rounded-full flex items-center justify-center text-white">
-                  <X size={14} />
+                <button onClick={identify} style={{ background: ACCENT }}
+                  className="w-full py-3 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2">
+                  <Search size={16} /> Identify plant
                 </button>
               )}
-            </div>
 
-            {/* Identify button */}
-            {status === 'idle' && (
-              <button
-                onClick={identify}
-                style={{ background: ACCENT }}
-                className="w-full py-3 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2"
-              >
-                <Search size={16} /> Identify plant
-              </button>
-            )}
-
-            {/* Loading state */}
-            {status === 'loading' && (
-              <div className="flex flex-col items-center gap-3 py-6">
-                <div className="w-10 h-10 rounded-full border-4 border-slate-200 border-t-green-600 animate-spin" />
-                <p className="text-sm text-slate-500">Analysing plant...</p>
-              </div>
-            )}
-
-            {/* Error */}
-            {status === 'error' && (
-              <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-3">
-                <p className="text-sm text-red-700">{errorMsg}</p>
-                <button onClick={() => setStatus('idle')} className="text-sm text-red-600 font-medium underline">Try again</button>
-              </div>
-            )}
-
-            {/* Result */}
-            {status === 'result' && result && (
-              <div className="space-y-3">
-                {/* Header card */}
-                <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-                  <div className="p-4" style={{ background: `${ACCENT}12` }}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h2 className="text-lg font-bold text-slate-800">{result.commonName}</h2>
-                        <p className="text-sm italic text-slate-500">{result.scientificName}</p>
-                      </div>
-                      <span className={`flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full ${
-                        result.confidence === 'High' ? 'bg-green-100 text-green-700' :
-                        result.confidence === 'Medium' ? 'bg-amber-100 text-amber-700' :
-                        'bg-slate-100 text-slate-600'
-                      }`}>
-                        {result.confidence} confidence
-                      </span>
-                    </div>
-                    {result.summary && (
-                      <p className="text-sm text-slate-600 mt-2 leading-relaxed">{result.summary}</p>
-                    )}
-                  </div>
-
-                  {/* Alternatives */}
-                  {result.alternatives && result.alternatives.length > 0 && (
-                    <div className="px-4 py-3 border-t border-slate-100">
-                      <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Could also be</p>
-                      <div className="space-y-1">
-                        {result.alternatives.map((alt, i) => (
-                          <div key={i} className="flex items-baseline gap-2">
-                            <span className="text-sm text-slate-700 font-medium">{alt.commonName}</span>
-                            <span className="text-xs italic text-slate-400">{alt.scientificName}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+              {status === 'loading' && (
+                <div className="flex flex-col items-center gap-3 py-6">
+                  <div className="w-10 h-10 rounded-full border-4 border-slate-200 border-t-green-600 animate-spin" />
+                  <p className="text-sm text-slate-500">Analysing plant...</p>
                 </div>
+              )}
 
-                {/* Tabs */}
-                <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
-                  {TABS.map((tab) => (
-                    <button
-                      key={tab}
-                      onClick={() => setActiveTab(tab)}
-                      className={`flex-1 py-1.5 rounded-md text-xs font-medium capitalize transition-colors ${
-                        activeTab === tab ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'
-                      }`}
-                    >
-                      {tab === 'overview' ? 'Overview' : tab === 'care' ? 'Care guide' : 'Display ideas'}
-                    </button>
-                  ))}
+              {status === 'error' && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-3">
+                  <p className="text-sm text-red-700">{errorMsg}</p>
+                  <button onClick={() => setStatus('idle')} className="text-sm text-red-600 font-medium underline">Try again</button>
                 </div>
+              )}
 
-                {/* Overview tab — summary + light/water quick facts */}
-                {activeTab === 'overview' && result.care && (
-                  <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="flex items-start gap-2">
-                        <Sun size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-xs text-slate-400">Light</p>
-                          <p className="text-sm text-slate-700">{result.care.light}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <Droplets size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-xs text-slate-400">Watering</p>
-                          <p className="text-sm text-slate-700">{result.care.watering}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <Thermometer size={16} className="text-red-400 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-xs text-slate-400">Temperature</p>
-                          <p className="text-sm text-slate-700">{result.care.temperature}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <Info size={16} className="text-slate-400 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-xs text-slate-400">Humidity</p>
-                          <p className="text-sm text-slate-700">{result.care.humidity}</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Care guide tab */}
-                {activeTab === 'care' && result.care && (
-                  <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
-                    {[
-                      ['Light', result.care.light],
-                      ['Watering', result.care.watering],
-                      ['Humidity', result.care.humidity],
-                      ['Temperature', result.care.temperature],
-                      ['Feeding', result.care.feeding],
-                      ['Notes', result.care.notes],
-                    ].filter(([, v]) => v).map(([label, value]) => (
-                      <div key={label} className="px-4 py-3">
-                        <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-0.5">{label}</p>
-                        <p className="text-sm text-slate-700">{value}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Display ideas tab */}
-                {activeTab === 'display' && result.displayTips && (
-                  <div className="space-y-3">
-                    {result.displayTips.positioning && (
-                      <div className="bg-white border border-slate-200 rounded-xl p-4">
-                        <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Best positioning</p>
-                        <p className="text-sm text-slate-700">{result.displayTips.positioning}</p>
-                      </div>
-                    )}
-                    {result.displayTips.companions && result.displayTips.companions.length > 0 && (
-                      <div className="bg-white border border-slate-200 rounded-xl p-4">
-                        <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Companion plants</p>
-                        <div className="flex flex-wrap gap-2">
-                          {result.displayTips.companions.map((c, i) => (
-                            <span key={i} className="text-xs px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">{c}</span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {result.displayTips.displayIdeas && (
-                      <div className="bg-white border border-slate-200 rounded-xl p-4">
-                        <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Mixed display ideas</p>
-                        <p className="text-sm text-slate-700">{result.displayTips.displayIdeas}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* New search */}
-                <button
-                  onClick={reset}
-                  className="w-full py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600 flex items-center justify-center gap-2"
-                >
-                  <Search size={14} /> Identify another plant
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+              {status === 'result' && result && (
+                <div className="space-y-3">
+                  <ResultCard res={result} showSaveButton={true} />
+                  <button onClick={reset}
+                    className="w-full py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600 flex items-center justify-center gap-2">
+                    <Search size={14} /> Identify another plant
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
-
 function ModuleStub({ moduleKey, onClose }) {
   const mod = MODULES[moduleKey];
   const Icon = mod.icon;
