@@ -3020,6 +3020,7 @@ function PlantIDFlow({ onClose }) {
   const [saved, setSaved] = useState(false);
   const [library, setLibrary] = useState([]);
   const [selectedEntry, setSelectedEntry] = useState(null);
+  const [quickMode, setQuickMode] = useState(false);
   const cameraRef = useRef(null);
   const galleryRef = useRef(null);
 
@@ -3057,7 +3058,7 @@ function PlantIDFlow({ onClose }) {
       const res = await fetch('/api/identify-plant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: image.base64, mediaType: image.mediaType }),
+        body: JSON.stringify({ imageBase64: image.base64, mediaType: image.mediaType, quickMode }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Identification failed');
@@ -3107,7 +3108,7 @@ function PlantIDFlow({ onClose }) {
   const ACCENT = PLANT_ID_ACCENT;
   const TABS = ['overview', 'care', 'display'];
 
-  const ResultCard = ({ res, imgSrc, showSaveButton = false }) => (
+  const ResultCard = ({ res, imgSrc, showSaveButton = false, isQuick = false }) => (
     <div className="space-y-3">
       {imgSrc && (
         <div className="rounded-xl overflow-hidden bg-slate-100">
@@ -3146,6 +3147,8 @@ function PlantIDFlow({ onClose }) {
         )}
       </div>
 
+      {!isQuick && (
+      <>
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
         {TABS.map((tab) => (
           <button key={tab} onClick={() => setActiveTab(tab)}
@@ -3208,6 +3211,8 @@ function PlantIDFlow({ onClose }) {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
 
       {showSaveButton && (
@@ -3331,10 +3336,24 @@ function PlantIDFlow({ onClose }) {
               </div>
 
               {status === 'idle' && (
-                <button onClick={identify} style={{ background: ACCENT }}
-                  className="w-full py-3 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2">
-                  <Search size={16} /> Identify plant
-                </button>
+                <>
+                  <button
+                    onClick={() => setQuickMode((v) => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-600"
+                  >
+                    <div>
+                      <span className="font-medium">Quick ID</span>
+                      <span className="text-slate-400 text-xs ml-2">{quickMode ? 'Name only' : 'Full care & display info'}</span>
+                    </div>
+                    <span className={`w-10 h-6 rounded-full flex items-center transition-colors flex-shrink-0 ${quickMode ? 'bg-teal-600' : 'bg-slate-200'}`}>
+                      <span className={`w-5 h-5 bg-white rounded-full shadow transition-transform mx-0.5 ${quickMode ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </span>
+                  </button>
+                  <button onClick={identify} style={{ background: ACCENT }}
+                    className="w-full py-3 rounded-xl text-white text-sm font-semibold flex items-center justify-center gap-2">
+                    <Search size={16} /> Identify plant
+                  </button>
+                </>
               )}
 
               {status === 'loading' && (
@@ -3353,7 +3372,7 @@ function PlantIDFlow({ onClose }) {
 
               {status === 'result' && result && (
                 <div className="space-y-3">
-                  <ResultCard res={result} showSaveButton={true} />
+                  <ResultCard res={result} showSaveButton={true} isQuick={quickMode} />
                   <button onClick={reset}
                     className="w-full py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600 flex items-center justify-center gap-2">
                     <Search size={14} /> Identify another plant

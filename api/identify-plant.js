@@ -13,12 +13,29 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'API key not configured' });
   }
 
-  const { imageBase64, mediaType } = req.body;
+  const { imageBase64, mediaType, quickMode } = req.body;
   if (!imageBase64) {
     return res.status(400).json({ error: 'No image provided' });
   }
 
-  const prompt = `You are an expert horticulturalist and botanist. Analyse this plant photo and provide the following in JSON format only (no other text):
+  const quickPrompt = `You are an expert botanist. Identify the plant in this photo and respond in JSON only (no other text):
+
+{
+  "identified": true or false,
+  "commonName": "most likely common name",
+  "scientificName": "genus species",
+  "confidence": "High / Medium / Low",
+  "alternatives": [
+    { "commonName": "...", "scientificName": "..." }
+  ],
+  "care": {},
+  "displayTips": {},
+  "summary": ""
+}
+
+If no plant is visible or identifiable, set "identified" to false. Always return valid JSON.`;
+
+  const fullPrompt = `You are an expert horticulturalist and botanist. Analyse this plant photo and provide the following in JSON format only (no other text):
 
 {
   "identified": true or false,
@@ -56,7 +73,7 @@ If the image does not clearly show a plant, or you cannot identify it, set "iden
       },
       body: JSON.stringify({
         model: 'claude-opus-4-6',
-        max_tokens: 1024,
+        max_tokens: quickMode ? 256 : 1024,
         messages: [
           {
             role: 'user',
@@ -71,7 +88,7 @@ If the image does not clearly show a plant, or you cannot identify it, set "iden
               },
               {
                 type: 'text',
-                text: prompt,
+                text: quickMode ? quickPrompt : fullPrompt,
               },
             ],
           },
@@ -88,7 +105,6 @@ If the image does not clearly show a plant, or you cannot identify it, set "iden
     const data = await response.json();
     const text = data.content?.[0]?.text || '';
 
-    // Extract JSON from response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return res.status(502).json({ error: 'Could not parse identification result' });
