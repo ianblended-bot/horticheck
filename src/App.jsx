@@ -446,6 +446,22 @@ function newSARecord(overrides = {}) {
   };
 }
 
+const SA_POT_SIZES = ['9cm','10cm','12cm','14cm','15cm','17cm','19cm','21cm','24cm','28cm','1m','1.2m','1.5m','Other'];
+
+function newSAReplacementRow() {
+  return { id: `rr-${Date.now()}-${Math.random().toString(36).slice(2)}`, qty: '', potSize: '9cm', customSize: '' };
+}
+
+function saReplacementTotal(rows) {
+  return (rows || []).reduce((s, r) => s + (parseInt(r.qty, 10) || 0), 0);
+}
+
+function saReplacementSummary(rows) {
+  const valid = (rows || []).filter((r) => parseInt(r.qty, 10) > 0);
+  if (!valid.length) return '';
+  return valid.map((r) => `${r.qty} × ${r.potSize === 'Other' ? (r.customSize || 'Other') : r.potSize}`).join(', ');
+}
+
 function newSAZone(name) {
   return {
     id: `sazone-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -454,8 +470,11 @@ function newSAZone(name) {
     containers: '',
     pests: null,
     pestPhotos: [],
-    replacements: '',
+    replacementRows: [],
     replacementPhotos: [],
+    hazards: null,
+    hazardNotes: '',
+    hazardPhotos: [],
     notes: '',
     notePhotos: [],
     zonePhotos: [],
@@ -2403,7 +2422,9 @@ async function exportSAPdf(record) {
     doc.text(zone.name, margin, y); y += 10;
     doc.setFontSize(10);
     [['Plants', zone.plants || '-'], ['Containers', zone.containers || '-'],
-     ['Signs of pests', zone.pests || '-'], ['Replacements required', zone.replacements || '-']].forEach(([label, val]) => {
+     ['Signs of pests', zone.pests || '-'],
+     ['Replacements required', saReplacementTotal(zone.replacementRows) > 0 ? `${saReplacementTotal(zone.replacementRows)} (${saReplacementSummary(zone.replacementRows)})` : '-'],
+     ['H&S hazards (not in RAMs)', zone.hazards || '-']].forEach(([label, val]) => {
       doc.setFont(undefined, 'normal'); doc.setTextColor(60, 60, 60);
       doc.text(label, margin, y);
       doc.setFont(undefined, 'bold'); doc.setTextColor(40, 40, 40);
@@ -2430,6 +2451,7 @@ async function exportSAPdf(record) {
     [{ label: 'Zone photos', photos: zone.zonePhotos || [] },
      { label: 'Pest photos', photos: zone.pestPhotos || [] },
      { label: 'Replacement photos', photos: zone.replacementPhotos || [] },
+     { label: 'H&S photos', photos: zone.hazardPhotos || [] },
      { label: 'Note photos', photos: zone.notePhotos || [] }].filter((s) => s.photos.length > 0).forEach(({ label, photos }) => {
       if (y > pageH - 60) { doc.addPage(); addHeaderBar(siteInfo.site || ''); }
       y += 6;
@@ -2462,7 +2484,6 @@ async function exportSAPdf(record) {
 function generateSASummary(zone) {
   const parts = [];
 
-  // Plants and containers
   const plants = parseInt(zone.plants, 10);
   const containers = parseInt(zone.containers, 10);
   if (!isNaN(plants) && !isNaN(containers) && plants > 0 && containers > 0) {
@@ -2473,20 +2494,25 @@ function generateSASummary(zone) {
     parts.push(`This zone contains ${containers} container${containers === 1 ? '' : 's'}.`);
   }
 
-  // Pests
   if (zone.pests === 'No') {
     parts.push('No signs of pest activity were identified.');
   } else if (zone.pests === 'Yes') {
     parts.push('Signs of pest activity were identified and have been recorded.');
   }
 
-  // Replacements
-  const replacements = parseInt(zone.replacements, 10);
-  if (!isNaN(replacements) && replacements > 0) {
-    parts.push(`${replacements} plant${replacements === 1 ? '' : 's'} ${replacements === 1 ? 'has' : 'have'} been identified as requiring replacement.`);
+  const total = saReplacementTotal(zone.replacementRows);
+  if (total > 0) {
+    const breakdown = saReplacementSummary(zone.replacementRows);
+    parts.push(`${total} plant${total === 1 ? '' : 's'} ${total === 1 ? 'has' : 'have'} been identified as requiring replacement${breakdown ? `: ${breakdown}` : ''}.`);
   }
 
-  // Notes
+  if (zone.hazards === 'Yes') {
+    const detail = zone.hazardNotes && zone.hazardNotes.trim() ? ` ${zone.hazardNotes.trim()}` : '';
+    parts.push(`A health and safety hazard not covered by the existing RAMs was identified.${detail}`);
+  } else if (zone.hazards === 'No') {
+    parts.push('No health and safety hazards outside the existing RAMs were identified.');
+  }
+
   if (zone.notes && zone.notes.trim()) {
     parts.push(zone.notes.trim());
   }
@@ -2812,24 +2838,148 @@ function SAFlow({ record, onChange, onClose }) {
               <button onClick={() => toggleSection('replacements')} className="w-full flex items-center justify-between px-4 py-3 text-left">
                 <span className="text-sm font-medium text-slate-800">Replacements required</span>
                 <span className="flex items-center gap-2">
-                  {currentZone.replacements && <span className="text-xs font-semibold text-blue-700">{currentZone.replacements}</span>}
+                  {saReplacementTotal(currentZone.replacementRows) > 0 && (
+                    <span className="text-xs font-semibold text-blue-700">{saReplacementTotal(currentZone.replacementRows)} total</span>
+                  )}
                   {(currentZone.replacementPhotos || []).length > 0 && <span className="text-xs text-slate-400 flex items-center gap-0.5"><Camera size={11} /> {currentZone.replacementPhotos.length}</span>}
                   {expandedSection === 'replacements' ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
                 </span>
               </button>
               {expandedSection === 'replacements' && (
                 <div className="border-t border-slate-100 px-4 py-3 space-y-2">
-                  <input key={`re-${currentZoneIdx}-${currentZone.replacements}`} type="number" min="0"
-                    defaultValue={currentZone.replacements || ''} onFocus={(e) => e.target.select()}
-                    onBlur={(e) => updateZoneField(currentZoneIdx, 'replacements', e.target.value)}
-                    readOnly={readOnly} placeholder="0"
-                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  {(currentZone.replacementRows || []).map((row, rowIdx) => (
+                    <div key={row.id} className="flex items-end gap-2">
+                      <div className="w-16 flex-shrink-0">
+                        <p className="text-xs text-slate-400 mb-1">Qty</p>
+                        <input
+                          key={`qty-${row.id}`}
+                          type="number" min="0" placeholder="0"
+                          defaultValue={row.qty || ''}
+                          onFocus={(e) => e.target.select()}
+                          onBlur={(e) => {
+                            const rows = [...(currentZone.replacementRows || [])];
+                            rows[rowIdx] = { ...rows[rowIdx], qty: e.target.value };
+                            updateZoneField(currentZoneIdx, 'replacementRows', rows);
+                          }}
+                          readOnly={readOnly}
+                          className="w-full text-sm border border-slate-200 rounded-lg px-2 py-2 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-xs text-slate-400 mb-1">Pot size</p>
+                        <select
+                          value={row.potSize}
+                          onChange={(e) => {
+                            const rows = [...(currentZone.replacementRows || [])];
+                            rows[rowIdx] = { ...rows[rowIdx], potSize: e.target.value, customSize: '' };
+                            updateZoneField(currentZoneIdx, 'replacementRows', rows);
+                          }}
+                          disabled={readOnly}
+                          className="w-full text-sm border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        >
+                          {SA_POT_SIZES.map((s) => <option key={s}>{s}</option>)}
+                        </select>
+                      </div>
+                      {row.potSize === 'Other' && (
+                        <div className="flex-1">
+                          <p className="text-xs text-slate-400 mb-1">Specify</p>
+                          <input
+                            key={`custom-${row.id}`}
+                            type="text" placeholder="e.g. 40cm"
+                            defaultValue={row.customSize || ''}
+                            onBlur={(e) => {
+                              const rows = [...(currentZone.replacementRows || [])];
+                              rows[rowIdx] = { ...rows[rowIdx], customSize: e.target.value };
+                              updateZoneField(currentZoneIdx, 'replacementRows', rows);
+                            }}
+                            readOnly={readOnly}
+                            className="w-full text-sm border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                        </div>
+                      )}
+                      {!readOnly && (
+                        <button
+                          onClick={() => {
+                            const rows = (currentZone.replacementRows || []).filter((_, i) => i !== rowIdx);
+                            updateZoneField(currentZoneIdx, 'replacementRows', rows);
+                          }}
+                          className="w-8 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:text-red-500 flex-shrink-0"
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {!readOnly && (
+                    <button
+                      onClick={() => {
+                        const rows = [...(currentZone.replacementRows || []), newSAReplacementRow()];
+                        updateZoneField(currentZoneIdx, 'replacementRows', rows);
+                      }}
+                      className="w-full py-2 border border-dashed border-slate-300 rounded-lg text-xs text-slate-500 flex items-center justify-center gap-1.5 hover:bg-slate-50"
+                    >
+                      <Plus size={13} /> Add pot size
+                    </button>
+                  )}
+                  {saReplacementTotal(currentZone.replacementRows) > 0 && (
+                    <div className="flex items-center justify-between px-1 pt-1 border-t border-slate-100">
+                      <span className="text-xs text-slate-500">Total</span>
+                      <span className="text-sm font-semibold text-blue-700">{saReplacementTotal(currentZone.replacementRows)}</span>
+                    </div>
+                  )}
                   <SAPhotoRow photos={currentZone.replacementPhotos || []}
                     onAdd={(files) => addPhoto(currentZoneIdx, 'replacementPhotos', files)}
                     onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'replacementPhotos', photo })}
                     onRemove={(id) => removePhoto(currentZoneIdx, 'replacementPhotos', id)}
                     onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'replacementPhotos', id, cap)}
                     readOnly={readOnly} />
+                </div>
+              )}
+            </div>
+
+            {/* H&S */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <button onClick={() => toggleSection('hazards')} className="w-full flex items-center justify-between px-4 py-3 text-left">
+                <span className="text-sm font-medium text-slate-800">Health &amp; safety</span>
+                <span className="flex items-center gap-2">
+                  {currentZone.hazards && (
+                    <span className={`text-xs font-semibold ${currentZone.hazards === 'Yes' ? 'text-red-600' : 'text-green-600'}`}>{currentZone.hazards}</span>
+                  )}
+                  {(currentZone.hazardPhotos || []).length > 0 && <span className="text-xs text-slate-400 flex items-center gap-0.5"><Camera size={11} /> {currentZone.hazardPhotos.length}</span>}
+                  {expandedSection === 'hazards' ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
+                </span>
+              </button>
+              {expandedSection === 'hazards' && (
+                <div className="border-t border-slate-100 px-4 py-3 space-y-3">
+                  <p className="text-xs text-slate-500">Are there any hazards not included in RAMs?</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {['No', 'Yes'].map((v) => (
+                      <button key={v} disabled={readOnly}
+                        onClick={() => updateZoneField(currentZoneIdx, 'hazards', currentZone.hazards === v ? null : v)}
+                        style={currentZone.hazards === v ? { background: ACCENT, borderColor: ACCENT } : {}}
+                        className={`py-2 rounded-lg text-sm border transition-colors ${currentZone.hazards === v ? 'text-white font-medium' : 'border-slate-200 text-slate-600'}`}>
+                        {v}
+                      </button>
+                    ))}
+                  </div>
+                  {currentZone.hazards === 'Yes' && (
+                    <>
+                      <textarea
+                        key={`hz-${currentZoneIdx}-${currentZone.hazardNotes}`}
+                        defaultValue={currentZone.hazardNotes || ''}
+                        onBlur={(e) => updateZoneField(currentZoneIdx, 'hazardNotes', e.target.value)}
+                        rows={2} readOnly={readOnly}
+                        placeholder="Describe the hazard..."
+                        className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      />
+                      <SAPhotoRow photos={currentZone.hazardPhotos || []}
+                        onAdd={(files) => addPhoto(currentZoneIdx, 'hazardPhotos', files)}
+                        onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'hazardPhotos', photo })}
+                        onRemove={(id) => removePhoto(currentZoneIdx, 'hazardPhotos', id)}
+                        onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'hazardPhotos', id, cap)}
+                        readOnly={readOnly} />
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -2939,7 +3089,34 @@ function SAFlow({ record, onChange, onClose }) {
               {record.siteInfo.inspector && <p className="text-slate-500 text-xs mt-1">Inspector: {record.siteInfo.inspector}</p>}
             </div>
             <div className="bg-white border border-slate-200 rounded-xl p-3">
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Overall site notes</p>
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Site totals</p>
+              {(() => {
+                const totalPlants = record.zones.reduce((s, z) => s + (parseInt(z.plants, 10) || 0), 0);
+                const totalContainers = record.zones.reduce((s, z) => s + (parseInt(z.containers, 10) || 0), 0);
+                const totalReplacements = record.zones.reduce((s, z) => s + saReplacementTotal(z.replacementRows), 0);
+                const zonesWithPests = record.zones.filter((z) => z.pests === 'Yes').map((z) => z.name);
+                const zonesWithHazards = record.zones.filter((z) => z.hazards === 'Yes').map((z) => z.name);
+                return (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-slate-500">Total plants</span><span className="font-medium text-slate-800">{totalPlants || '-'}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Total containers</span><span className="font-medium text-slate-800">{totalContainers || '-'}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Total replacements</span><span className="font-medium text-slate-800">{totalReplacements || '-'}</span></div>
+                    {totalReplacements > 0 && (
+                      <div className="pt-1 border-t border-slate-100 space-y-1">
+                        {record.zones.filter((z) => saReplacementTotal(z.replacementRows) > 0).map((z) => (
+                          <div key={z.id} className="flex justify-between text-xs">
+                            <span className="text-slate-400">{z.name}</span>
+                            <span className="text-slate-600">{saReplacementSummary(z.replacementRows)} ({saReplacementTotal(z.replacementRows)} total)</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {zonesWithPests.length > 0 && <div className="flex justify-between"><span className="text-slate-500">Pests identified</span><span className="font-medium text-red-600">{zonesWithPests.join(', ')}</span></div>}
+                    {zonesWithHazards.length > 0 && <div className="flex justify-between"><span className="text-slate-500">H&amp;S hazards</span><span className="font-medium text-red-600">{zonesWithHazards.join(', ')}</span></div>}
+                  </div>
+                );
+              })()}
+            </div>
               <textarea key={record.overallNotes}
                 defaultValue={record.overallNotes || ''}
                 onBlur={(e) => update({ overallNotes: e.target.value })}
@@ -2955,8 +3132,9 @@ function SAFlow({ record, onChange, onClose }) {
                     <p className="text-sm font-medium text-slate-800">{z.name}</p>
                     <p className="text-xs text-slate-400 mt-0.5">
                       {[z.plants && `${z.plants} plants`, z.containers && `${z.containers} containers`,
-                        ((z.zonePhotos || []).length + (z.pestPhotos || []).length + (z.replacementPhotos || []).length + (z.notePhotos || []).length) > 0 &&
-                          `${(z.zonePhotos || []).length + (z.pestPhotos || []).length + (z.replacementPhotos || []).length + (z.notePhotos || []).length} photo${((z.zonePhotos || []).length + (z.pestPhotos || []).length + (z.replacementPhotos || []).length + (z.notePhotos || []).length) === 1 ? '' : 's'}`
+                        saReplacementTotal(z.replacementRows) > 0 && `${saReplacementTotal(z.replacementRows)} replacements`,
+                        ((z.zonePhotos || []).length + (z.pestPhotos || []).length + (z.replacementPhotos || []).length + (z.notePhotos || []).length + (z.hazardPhotos || []).length) > 0 &&
+                          `${(z.zonePhotos || []).length + (z.pestPhotos || []).length + (z.replacementPhotos || []).length + (z.notePhotos || []).length + (z.hazardPhotos || []).length} photos`
                       ].filter(Boolean).join(' · ') || 'No data yet'}
                     </p>
                   </div>
@@ -3440,8 +3618,11 @@ export default function HortiCheckApp() {
           containers: '',
           pests: null,
           pestPhotos: [],
-          replacements: '',
+          replacementRows: [],
           replacementPhotos: [],
+          hazards: null,
+          hazardNotes: '',
+          hazardPhotos: [],
           notes: '',
           notePhotos: [],
           zonePhotos: [],
@@ -3449,6 +3630,7 @@ export default function HortiCheckApp() {
           ...z,
           pestPhotos: (z.pestPhotos || []).map(migratePhoto),
           replacementPhotos: (z.replacementPhotos || []).map(migratePhoto),
+          hazardPhotos: (z.hazardPhotos || []).map(migratePhoto),
           notePhotos: (z.notePhotos || []).map(migratePhoto),
           zonePhotos: (z.zonePhotos || []).map(migratePhoto),
         })),
