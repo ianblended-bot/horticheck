@@ -3117,6 +3117,8 @@ function SAFlow({ record, onChange, onClose }) {
                 );
               })()}
             </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Overall site notes</p>
               <textarea key={record.overallNotes}
                 defaultValue={record.overallNotes || ''}
                 onBlur={(e) => update({ overallNotes: e.target.value })}
