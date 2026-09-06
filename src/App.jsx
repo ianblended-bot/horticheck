@@ -485,17 +485,6 @@ function saOverallRating(zones) {
   return worst;
 }
 
-function saOverallRating(zones) {
-  // Returns the dominant (worst) rating across all zones that have been rated.
-  const order = SA_RATINGS;
-  let worst = null;
-  zones.forEach((z) => {
-    if (!z.rating) return;
-    if (worst === null || order.indexOf(z.rating) > order.indexOf(worst)) worst = z.rating;
-  });
-  return worst;
-}
-
 const SA_OVERALL_PARAGRAPHS = {
   'Excellent':      'Overall site condition is excellent. Plants are healthy and displays are well presented throughout, with a consistently high standard maintained across all zones.',
   'Good':           'Overall site condition is good. The site is well maintained and generally meets the expected standard, with only minor points noted across individual zones.',
