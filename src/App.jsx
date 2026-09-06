@@ -448,6 +448,43 @@ function newSARecord(overrides = {}) {
 
 const SA_POT_SIZES = ['9cm','10cm','12cm','14cm','15cm','17cm','19cm','21cm','24cm','28cm','1m','1.2m','1.5m','Other'];
 
+const SA_RATINGS = ['Excellent', 'Good', 'Fair', 'Needs work', 'Below standard'];
+
+const SA_RATING_STYLES = {
+  'Excellent':      'bg-green-50 text-green-700 border-green-300',
+  'Good':           'bg-blue-50 text-blue-700 border-blue-300',
+  'Fair':           'bg-amber-50 text-amber-700 border-amber-300',
+  'Needs work':     'bg-orange-50 text-orange-700 border-orange-300',
+  'Below standard': 'bg-red-50 text-red-700 border-red-300',
+};
+
+const SA_RATING_ACTIVE = {
+  'Excellent':      'bg-green-600 text-white border-green-600',
+  'Good':           'bg-blue-600 text-white border-blue-600',
+  'Fair':           'bg-amber-500 text-white border-amber-500',
+  'Needs work':     'bg-orange-500 text-white border-orange-500',
+  'Below standard': 'bg-red-600 text-white border-red-600',
+};
+
+const SA_RATING_PARAGRAPHS = {
+  'Excellent':      'Overall zone condition is excellent. Plants are healthy and vigorous, displays are well presented and neatly arranged, and the general appearance is to a very high standard.',
+  'Good':           'Overall zone condition is good. Plants are in satisfactory health, displays are generally well maintained, and the overall appearance meets the expected standard with only minor points to note.',
+  'Fair':           'Overall zone condition is fair. Some plants or display areas require attention, and the general appearance would benefit from additional maintenance to meet the expected standard.',
+  'Needs work':     'Overall zone condition requires improvement. A number of plants or display areas are below the expected standard, and targeted maintenance is required to restore presentation and plant health.',
+  'Below standard': 'Overall zone condition is below standard. Significant issues were identified across plants and displays, and prompt remedial action is required to bring the zone up to the expected standard.',
+};
+
+function saOverallRating(zones) {
+  // Returns the dominant (worst) rating across all zones that have been rated.
+  const order = SA_RATINGS;
+  let worst = null;
+  zones.forEach((z) => {
+    if (!z.rating) return;
+    if (worst === null || order.indexOf(z.rating) > order.indexOf(worst)) worst = z.rating;
+  });
+  return worst;
+}
+
 function newSAReplacementRow() {
   return { id: `rr-${Date.now()}-${Math.random().toString(36).slice(2)}`, qty: '', potSize: '9cm', customSize: '' };
 }
@@ -466,6 +503,7 @@ function newSAZone(name) {
   return {
     id: `sazone-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     name,
+    rating: null,
     plants: '',
     containers: '',
     pests: null,
@@ -2355,7 +2393,8 @@ function QAFlow({ record, onChange, onClose }) {
 
 const SA_ACCENT = [30, 64, 175]; // blue #1E40AF
 
-async function exportSAPdf(record) {
+async function exportSAPdf(record, options = {}) {
+  const { includeRatings = true } = options;
   const jsPDF = await loadJsPDF();
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageW = 210;
@@ -2399,7 +2438,8 @@ async function exportSAPdf(record) {
   y = 78;
   [['Client', siteInfo.client || '-'], ['Site', siteInfo.site || '-'], ['Address', siteInfo.address || '-'],
    ['Date', siteInfo.date ? new Date(siteInfo.date + 'T00:00:00').toLocaleDateString('en-GB') : '-'],
-   ['Inspector', siteInfo.inspector || '-'], ['Zones audited', String(zones.length)]].forEach(([label, val]) => {
+   ['Inspector', siteInfo.inspector || '-'], ['Zones audited', String(zones.length)],
+   ...(includeRatings && saOverallRating(zones) ? [['Overall condition', saOverallRating(zones)]] : [])].forEach(([label, val]) => {
     doc.setFont(undefined, 'bold'); doc.setFontSize(11);
     doc.text(label + ':', margin, y);
     doc.setFont(undefined, 'normal');
@@ -2421,6 +2461,15 @@ async function exportSAPdf(record) {
     doc.setFontSize(15); doc.setFont(undefined, 'bold'); doc.setTextColor(20, 20, 20);
     doc.text(zone.name, margin, y); y += 10;
     doc.setFontSize(10);
+
+    if (includeRatings && zone.rating) {
+      doc.setFont(undefined, 'normal'); doc.setTextColor(60, 60, 60);
+      doc.text('Overall condition', margin, y);
+      doc.setFont(undefined, 'bold'); doc.setTextColor(40, 40, 40);
+      doc.text(zone.rating, pageW - margin, y, { align: 'right' });
+      y += 7;
+    }
+
     [['Plants', zone.plants || '-'], ['Containers', zone.containers || '-'],
      ['Signs of pests', zone.pests || '-'],
      ['Replacements required', saReplacementTotal(zone.replacementRows) > 0 ? `${saReplacementTotal(zone.replacementRows)} (${saReplacementSummary(zone.replacementRows)})` : '-'],
@@ -2484,6 +2533,11 @@ async function exportSAPdf(record) {
 function generateSASummary(zone) {
   const parts = [];
 
+  // Rating paragraph first
+  if (zone.rating && SA_RATING_PARAGRAPHS[zone.rating]) {
+    parts.push(SA_RATING_PARAGRAPHS[zone.rating]);
+  }
+
   const plants = parseInt(zone.plants, 10);
   const containers = parseInt(zone.containers, 10);
   if (!isNaN(plants) && !isNaN(containers) && plants > 0 && containers > 0) {
@@ -2513,9 +2567,8 @@ function generateSASummary(zone) {
     parts.push('No health and safety hazards outside the existing RAMs were identified.');
   }
 
-  if (zone.notes && zone.notes.trim()) {
-    parts.push(zone.notes.trim());
-  }
+  // Notes are NOT included here to avoid duplication — they appear in the
+  // Notes field separately and shouldn't be repeated in the zone summary.
 
   return parts.join(' ');
 }
@@ -2570,6 +2623,7 @@ function SAFlow({ record, onChange, onClose }) {
   const [currentZoneIdx, setCurrentZoneIdx] = useState(0);
   const [annotating, setAnnotating] = useState(null);
   const [exporting, setExporting] = useState(false);
+  const [includeRatings, setIncludeRatings] = useState(true);
   const [addingZone, setAddingZone] = useState(false);
   const [pendingZoneName, setPendingZoneName] = useState('');
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
@@ -2617,7 +2671,7 @@ function SAFlow({ record, onChange, onClose }) {
 
   const handleExport = async () => {
     setExporting(true);
-    try { await exportSAPdf(record); }
+    try { await exportSAPdf(record, { includeRatings }); }
     catch (e) { alert('Could not generate the PDF. Please try again.'); }
     finally { setExporting(false); }
   };
@@ -3033,16 +3087,48 @@ function SAFlow({ record, onChange, onClose }) {
             </div>
 
             {/* Zone summary */}
+            {/* Zone rating */}
+            <div className="bg-white border border-slate-200 rounded-xl p-3">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Overall zone condition</p>
+              <div className="grid grid-cols-3 gap-2">
+                {SA_RATINGS.map((r) => (
+                  <button key={r} disabled={readOnly}
+                    onClick={() => updateZoneField(currentZoneIdx, 'rating', currentZone.rating === r ? null : r)}
+                    className={`py-2 rounded-lg text-xs font-medium border transition-colors ${
+                      currentZone.rating === r ? SA_RATING_ACTIVE[r] : 'border-slate-200 text-slate-600 bg-white'
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="bg-white border border-slate-200 rounded-xl p-3">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">Zone summary</p>
                 {!readOnly && (
-                  <button
-                    onClick={() => updateZoneField(currentZoneIdx, 'summary', generateSASummary(currentZone))}
-                    className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
-                  >
-                    <RefreshCw size={11} /> Generate
-                  </button>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => {
+                        const generated = generateSASummary(currentZone);
+                        const existing = currentZone.summary ? currentZone.summary.trim() : '';
+                        const combined = existing ? `${existing}\n\n${generated}` : generated;
+                        updateZoneField(currentZoneIdx, 'summary', combined);
+                      }}
+                      className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
+                      title="Append generated text to existing summary"
+                    >
+                      <Plus size={10} /> Generate
+                    </button>
+                    <button
+                      onClick={() => updateZoneField(currentZoneIdx, 'summary', generateSASummary(currentZone))}
+                      className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
+                      title="Replace summary with generated text"
+                    >
+                      <RefreshCw size={10} /> Replace
+                    </button>
+                  </div>
                 )}
               </div>
               <textarea
@@ -3050,7 +3136,7 @@ function SAFlow({ record, onChange, onClose }) {
                 defaultValue={currentZone.summary || ''}
                 onBlur={(e) => updateZoneField(currentZoneIdx, 'summary', e.target.value)}
                 rows={4} readOnly={readOnly}
-                placeholder="Tap 'Generate' to create a summary from the data above, or type your own..."
+                placeholder="Tap 'Generate' to create a summary, or type your own..."
                 className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 leading-relaxed"
               />
             </div>
@@ -3088,6 +3174,37 @@ function SAFlow({ record, onChange, onClose }) {
               {record.siteInfo.address && <p className="text-slate-500 text-xs">{record.siteInfo.address}</p>}
               {record.siteInfo.inspector && <p className="text-slate-500 text-xs mt-1">Inspector: {record.siteInfo.inspector}</p>}
             </div>
+
+            {/* Overall site rating */}
+            {(() => {
+              const overall = saOverallRating(record.zones);
+              const ratedZones = record.zones.filter((z) => z.rating);
+              if (!overall && ratedZones.length === 0) return null;
+              return (
+                <div className="bg-white border border-slate-200 rounded-xl p-3">
+                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Overall site condition</p>
+                  {overall ? (
+                    <div className="flex items-center gap-3">
+                      <span className={`px-3 py-1.5 rounded-lg text-sm font-semibold border ${SA_RATING_ACTIVE[overall]}`}>{overall}</span>
+                      <span className="text-xs text-slate-400">{ratedZones.length} of {record.zones.length} zone{record.zones.length === 1 ? '' : 's'} rated</span>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-400">No zones rated yet</p>
+                  )}
+                  {ratedZones.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {ratedZones.map((z) => (
+                        <div key={z.id} className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500">{z.name}</span>
+                          <span className={`px-2 py-0.5 rounded-md border font-medium ${SA_RATING_STYLES[z.rating]}`}>{z.rating}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             <div className="bg-white border border-slate-200 rounded-xl p-3">
               <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Site totals</p>
               {(() => {
@@ -3144,6 +3261,15 @@ function SAFlow({ record, onChange, onClose }) {
                 </button>
               ))}
             </div>
+            <button
+              onClick={() => setIncludeRatings((v) => !v)}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-600"
+            >
+              <span>Include ratings in PDF</span>
+              <span className={`w-10 h-6 rounded-full flex items-center transition-colors flex-shrink-0 ${includeRatings ? 'bg-blue-600' : 'bg-slate-200'}`}>
+                <span className={`w-5 h-5 bg-white rounded-full shadow transition-transform mx-0.5 ${includeRatings ? 'translate-x-4' : 'translate-x-0'}`} />
+              </span>
+            </button>
             <button onClick={handleExport} disabled={exporting}
               className="w-full py-2.5 rounded-lg border border-slate-200 text-sm text-slate-600 bg-white flex items-center justify-center gap-1.5 disabled:opacity-50">
               <Download size={14} /> {exporting ? 'Generating...' : 'Export PDF'}
@@ -3629,6 +3755,7 @@ export default function HortiCheckApp() {
           notePhotos: [],
           zonePhotos: [],
           summary: '',
+          rating: null,
           ...z,
           pestPhotos: (z.pestPhotos || []).map(migratePhoto),
           replacementPhotos: (z.replacementPhotos || []).map(migratePhoto),
