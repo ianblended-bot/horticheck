@@ -485,6 +485,56 @@ function saOverallRating(zones) {
   return worst;
 }
 
+function saOverallRating(zones) {
+  // Returns the dominant (worst) rating across all zones that have been rated.
+  const order = SA_RATINGS;
+  let worst = null;
+  zones.forEach((z) => {
+    if (!z.rating) return;
+    if (worst === null || order.indexOf(z.rating) > order.indexOf(worst)) worst = z.rating;
+  });
+  return worst;
+}
+
+const SA_OVERALL_PARAGRAPHS = {
+  'Excellent':      'Overall site condition is excellent. Plants are healthy and displays are well presented throughout, with a consistently high standard maintained across all zones.',
+  'Good':           'Overall site condition is good. The site is well maintained and generally meets the expected standard, with only minor points noted across individual zones.',
+  'Fair':           'Overall site condition is fair. While some zones are well maintained, others would benefit from additional attention to bring the site up to the expected standard.',
+  'Needs work':     'Overall site condition requires improvement. A number of zones showed issues that need to be addressed, and targeted maintenance is recommended across the site.',
+  'Below standard': 'Overall site condition is below standard. Significant issues were identified across multiple zones, and prompt remedial action is required to restore the site to the expected standard.',
+};
+
+function generateSAOverallSummary(record) {
+  const parts = [];
+  const overall = saOverallRating(record.zones);
+  if (overall && SA_OVERALL_PARAGRAPHS[overall]) {
+    parts.push(SA_OVERALL_PARAGRAPHS[overall]);
+  }
+  const totalPlants = record.zones.reduce((s, z) => s + (parseInt(z.plants, 10) || 0), 0);
+  const totalContainers = record.zones.reduce((s, z) => s + (parseInt(z.containers, 10) || 0), 0);
+  if (totalPlants > 0 || totalContainers > 0) {
+    const bits = [];
+    if (totalPlants > 0) bits.push(`${totalPlants} plant${totalPlants === 1 ? '' : 's'}`);
+    if (totalContainers > 0) bits.push(`${totalContainers} container${totalContainers === 1 ? '' : 's'}`);
+    parts.push(`The site contains a total of ${bits.join(' across ')}.`);
+  }
+  const totalReplacements = record.zones.reduce((s, z) => s + saReplacementTotal(z.replacementRows), 0);
+  if (totalReplacements > 0) {
+    const breakdown = record.zones.filter((z) => saReplacementTotal(z.replacementRows) > 0)
+      .map((z) => `${z.name} (${saReplacementSummary(z.replacementRows)})`).join(', ');
+    parts.push(`A total of ${totalReplacements} plant${totalReplacements === 1 ? '' : 's'} ${totalReplacements === 1 ? 'requires' : 'require'} replacement: ${breakdown}.`);
+  }
+  const pestZones = record.zones.filter((z) => z.pests === 'Yes').map((z) => z.name);
+  if (pestZones.length > 0) {
+    parts.push(`Signs of pest activity were identified in: ${pestZones.join(', ')}.`);
+  }
+  const hazardZones = record.zones.filter((z) => z.hazards === 'Yes').map((z) => z.name);
+  if (hazardZones.length > 0) {
+    parts.push(`Health and safety hazards not covered by existing RAMs were identified in: ${hazardZones.join(', ')}.`);
+  }
+  return parts.join(' ');
+}
+
 function newSAReplacementRow() {
   return { id: `rr-${Date.now()}-${Math.random().toString(36).slice(2)}`, qty: '', potSize: '9cm', customSize: '' };
 }
@@ -1678,7 +1728,7 @@ function QAFlow({ record, onChange, onClose }) {
   const [expandedCat, setExpandedCat] = useState(null);
   const [annotating, setAnnotating] = useState(null);
   const [exporting, setExporting] = useState(false);
-  const [includeRatings, setIncludeRatings] = useState(true);
+  const [includeRatings, setIncludeRatings] = useState(false);
   const [newZoneName, setNewZoneName] = useState('');
   const [addingZone, setAddingZone] = useState(false);
   const [pendingZoneName, setPendingZoneName] = useState('');
@@ -2623,7 +2673,7 @@ function SAFlow({ record, onChange, onClose }) {
   const [currentZoneIdx, setCurrentZoneIdx] = useState(0);
   const [annotating, setAnnotating] = useState(null);
   const [exporting, setExporting] = useState(false);
-  const [includeRatings, setIncludeRatings] = useState(true);
+  const [includeRatings, setIncludeRatings] = useState(false);
   const [addingZone, setAddingZone] = useState(false);
   const [pendingZoneName, setPendingZoneName] = useState('');
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
@@ -3235,12 +3285,36 @@ function SAFlow({ record, onChange, onClose }) {
               })()}
             </div>
             <div className="bg-white border border-slate-200 rounded-xl p-3">
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">Overall site notes</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">Overall site summary</p>
+                {!readOnly && (
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => {
+                        const generated = generateSAOverallSummary(record);
+                        const existing = (record.overallNotes || '').trim();
+                        update({ overallNotes: existing ? `${existing}\n\n${generated}` : generated });
+                      }}
+                      className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
+                      title="Append generated summary to existing text"
+                    >
+                      <Plus size={10} /> Generate
+                    </button>
+                    <button
+                      onClick={() => update({ overallNotes: generateSAOverallSummary(record) })}
+                      className="text-xs text-slate-500 border border-slate-200 rounded-md px-2 py-1 flex items-center gap-1 hover:bg-slate-50"
+                      title="Replace with generated summary"
+                    >
+                      <RefreshCw size={10} /> Replace
+                    </button>
+                  </div>
+                )}
+              </div>
               <textarea key={record.overallNotes}
                 defaultValue={record.overallNotes || ''}
                 onBlur={(e) => update({ overallNotes: e.target.value })}
                 rows={5} readOnly={readOnly}
-                placeholder="General observations, site condition, access notes..."
+                placeholder="Tap 'Generate' to create a summary, or type your own..."
                 className="w-full text-sm text-slate-700 border border-slate-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-blue-400 leading-relaxed" />
             </div>
             <div className="space-y-2">
