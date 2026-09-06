@@ -2863,11 +2863,25 @@ function SAFlow({ record, onChange, onClose }) {
               </button>
               {expandedSection === 'plants' && (
                 <div className="border-t border-slate-100 px-4 py-3">
-                  <input key={`pl-${currentZoneIdx}-${currentZone.plants}`} type="number" min="0"
-                    defaultValue={currentZone.plants || ''} onFocus={(e) => e.target.select()}
-                    onBlur={(e) => updateZoneField(currentZoneIdx, 'plants', e.target.value)}
-                    readOnly={readOnly} placeholder="0"
-                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  <div className="flex items-center gap-2">
+                    {!readOnly && (
+                      <button onClick={() => updateZoneField(currentZoneIdx, 'plants', String(Math.max(0, (parseInt(currentZone.plants, 10) || 0) - 1)))}
+                        className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 flex-shrink-0">
+                        <Minus size={16} />
+                      </button>
+                    )}
+                    <input key={`pl-${currentZoneIdx}-${currentZone.plants}`} type="number" min="0"
+                      defaultValue={currentZone.plants || ''} onFocus={(e) => e.target.select()}
+                      onBlur={(e) => updateZoneField(currentZoneIdx, 'plants', e.target.value)}
+                      readOnly={readOnly} placeholder="0"
+                      className="flex-1 text-sm text-center border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                    {!readOnly && (
+                      <button onClick={() => updateZoneField(currentZoneIdx, 'plants', String((parseInt(currentZone.plants, 10) || 0) + 1))}
+                        className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 flex-shrink-0">
+                        <Plus size={16} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -2883,11 +2897,25 @@ function SAFlow({ record, onChange, onClose }) {
               </button>
               {expandedSection === 'containers' && (
                 <div className="border-t border-slate-100 px-4 py-3">
-                  <input key={`co-${currentZoneIdx}-${currentZone.containers}`} type="number" min="0"
-                    defaultValue={currentZone.containers || ''} onFocus={(e) => e.target.select()}
-                    onBlur={(e) => updateZoneField(currentZoneIdx, 'containers', e.target.value)}
-                    readOnly={readOnly} placeholder="0"
-                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  <div className="flex items-center gap-2">
+                    {!readOnly && (
+                      <button onClick={() => updateZoneField(currentZoneIdx, 'containers', String(Math.max(0, (parseInt(currentZone.containers, 10) || 0) - 1)))}
+                        className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 flex-shrink-0">
+                        <Minus size={16} />
+                      </button>
+                    )}
+                    <input key={`co-${currentZoneIdx}-${currentZone.containers}`} type="number" min="0"
+                      defaultValue={currentZone.containers || ''} onFocus={(e) => e.target.select()}
+                      onBlur={(e) => updateZoneField(currentZoneIdx, 'containers', e.target.value)}
+                      readOnly={readOnly} placeholder="0"
+                      className="flex-1 text-sm text-center border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                    {!readOnly && (
+                      <button onClick={() => updateZoneField(currentZoneIdx, 'containers', String((parseInt(currentZone.containers, 10) || 0) + 1))}
+                        className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 flex-shrink-0">
+                        <Plus size={16} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
