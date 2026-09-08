@@ -6,45 +6,8 @@ import {
   List as ListIcon, Clock, CheckCircle2, PlayCircle, Image as ImageIcon,
   Minus, ThumbsUp, Search, Sparkles, Sun, Droplets, Thermometer, Info
 } from 'lucide-react';
-import { loadRecords, saveRecords } from './storage';
-
-// Separate IndexedDB helpers for the Plant ID library (stored under a
-// different key so it doesn't interfere with the QA/SA records array).
-async function openPlantLibrary() {
-  const db = await new Promise((resolve, reject) => {
-    const req = indexedDB.open('horticheck', 1);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-    req.onupgradeneeded = (e) => {
-      const d = e.target.result;
-      if (!d.objectStoreNames.contains('records')) d.createObjectStore('records');
-    };
-  });
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('records', 'readonly');
-    const req = tx.objectStore('records').get('plantLibrary');
-    req.onsuccess = () => resolve(req.result ?? []);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function savePlantLibrary(lib) {
-  const db = await new Promise((resolve, reject) => {
-    const req = indexedDB.open('horticheck', 1);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-    req.onupgradeneeded = (e) => {
-      const d = e.target.result;
-      if (!d.objectStoreNames.contains('records')) d.createObjectStore('records');
-    };
-  });
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('records', 'readwrite');
-    const req = tx.objectStore('records').put(lib, 'plantLibrary');
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
+import { loadRecords, saveRecords, openPlantLibrary, savePlantLibrary } from './storage';
+import { supabase } from './supabaseClient';
 
 /* ---------------------------------------------------------------
    Shared constants
@@ -1403,7 +1366,7 @@ async function exportQAPdf(record, options = {}) {
    Dashboard
 --------------------------------------------------------------- */
 
-function Dashboard({ records, onNewQA, onNewSA, onOpenPlantID, onOpenRecord, onOpenModuleStub, onDeleteRecord }) {
+function Dashboard({ records, onNewQA, onNewSA, onOpenPlantID, onOpenRecord, onOpenModuleStub, onDeleteRecord, onLogout }) {
   const [view, setView] = useState('list'); // list | calendar
 
   const scheduled = records.filter((r) => r.status === 'scheduled');
@@ -1459,7 +1422,9 @@ function Dashboard({ records, onNewQA, onNewSA, onOpenPlantID, onOpenRecord, onO
           </div>
           <span className="text-lg font-medium text-slate-800">HortiCheck</span>
         </div>
-        <Settings size={18} className="text-slate-400" />
+        <button onClick={onLogout} aria-label="Log out" className="p-1.5 -mr-1.5">
+          <Settings size={18} className="text-slate-400" />
+        </button>
       </div>
 
       <div className="grid grid-cols-3 gap-2.5 mb-6">
@@ -3812,10 +3777,119 @@ function ModuleStub({ moduleKey, onClose }) {
    Root app
 --------------------------------------------------------------- */
 
+/* ---------------------------------------------------------------
+   Auth screen — email/password login and signup via Supabase
+--------------------------------------------------------------- */
+
+function AuthScreen({ onAuthed }) {
+  const [mode, setMode] = useState('login'); // 'login' | 'signup'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setMessage('');
+    setLoading(true);
+    try {
+      if (mode === 'login') {
+        const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+        if (err) throw err;
+        onAuthed();
+      } else {
+        const { error: err } = await supabase.auth.signUp({ email, password });
+        if (err) throw err;
+        setMessage('Account created. Check your email to confirm, then log in.');
+        setMode('login');
+      }
+    } catch (err) {
+      setError(err.message || 'Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F1EFE8] font-sans flex items-center justify-center p-6">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="w-14 h-14 rounded-2xl bg-[#0F6E56] flex items-center justify-center mx-auto mb-3">
+            <ClipboardCheck size={26} className="text-white" />
+          </div>
+          <h1 className="text-xl font-bold text-slate-800">HortiCheck</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            {mode === 'login' ? 'Log in to your account' : 'Create an account'}
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3">
+          <div>
+            <label className="text-xs font-medium text-slate-400 uppercase tracking-wide block mb-1">Email</label>
+            <input
+              type="email" required autoComplete="email"
+              value={email} onChange={(e) => setEmail(e.target.value)}
+              className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-teal-400"
+              placeholder="you@example.com"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-400 uppercase tracking-wide block mb-1">Password</label>
+            <input
+              type="password" required autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              value={password} onChange={(e) => setPassword(e.target.value)}
+              minLength={6}
+              className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-teal-400"
+              placeholder="••••••••"
+            />
+          </div>
+
+          {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+          {message && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{message}</p>}
+
+          <button
+            type="submit" disabled={loading}
+            className="w-full py-2.5 rounded-lg bg-teal-600 text-white text-sm font-medium disabled:opacity-50"
+          >
+            {loading ? 'Please wait...' : mode === 'login' ? 'Log in' : 'Sign up'}
+          </button>
+        </form>
+
+        <button
+          onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setMessage(''); }}
+          className="w-full text-center text-sm text-slate-500 mt-4"
+        >
+          {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
+          <span className="text-teal-700 font-medium">{mode === 'login' ? 'Sign up' : 'Log in'}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
 export default function HortiCheckApp() {
   const [records, setRecords] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState({ screen: 'dashboard' }); // { screen: 'dashboard' } | { screen: 'qa', id } | { screen: 'stub', module }
+  const [session, setSession] = useState(undefined); // undefined = checking, null = logged out, object = logged in
+
+  // Check for an existing Supabase session on mount, and subscribe to changes.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      if (!newSession) {
+        // Logged out — clear local state so no data leaks between accounts.
+        setRecords([]);
+        setLoaded(false);
+        setView({ screen: 'dashboard' });
+      }
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
 
   // Migrates a single photo object from the old boolean `flagged` field
   // (pre-dating separate issue/good-practice flags) to the new `flagType`.
@@ -3883,9 +3957,11 @@ export default function HortiCheckApp() {
     };
   };
 
-  // Load saved records from IndexedDB on first mount.
+  // Load saved records from Supabase once logged in.
   useEffect(() => {
+    if (!session) return;
     let cancelled = false;
+    setLoaded(false);
     loadRecords().then((saved) => {
       if (cancelled) return;
       if (saved && Array.isArray(saved) && saved.length > 0) {
@@ -3899,35 +3975,18 @@ export default function HortiCheckApp() {
         }, []);
         setRecords(migrated.length > 0 ? migrated : saved);
       } else {
-        // First run / nothing saved yet — seed with a sample record.
-        const sample = newQARecord({
-          status: 'completed',
-          siteInfo: {
-            client: 'Acme Property Group',
-            site: 'Bishopsgate Tower',
-            address: '150 Bishopsgate, London EC2M 4AT',
-            technicians: 'J. Carter, M. Osei',
-            lastService: '2026-06-02',
-            inspector: 'R. Allen',
-            date: '2026-06-09',
-          },
-        });
-        const z = newZone('Reception');
-        z.categories.plantHealth = { rating: 'Good', feedback: CATEGORIES[0].paragraphs.Good, notes: '', photos: [] };
-        z.categories.containers = { rating: 'Excellent', feedback: CATEGORIES[1].paragraphs.Excellent, notes: '', photos: [] };
-        sample.zones = [z];
-        setRecords([sample]);
+        setRecords([]);
       }
       setLoaded(true);
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [session]);
 
-  // Persist to IndexedDB whenever records change (after initial load).
+  // Persist to Supabase whenever records change (after initial load).
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !session) return;
     saveRecords(records);
-  }, [records, loaded]);
+  }, [records, loaded, session]);
 
   const openRecord = (id) => {
     const record = records.find((r) => r.id === id);
@@ -3959,10 +4018,29 @@ export default function HortiCheckApp() {
     setRecords((prev) => prev.filter((r) => r.id !== id));
   };
 
-  if (!loaded) {
+  const logout = async () => {
+    if (!window.confirm('Log out of HortiCheck?')) return;
+    await supabase.auth.signOut();
+  };
+
+  // Still checking for an existing session.
+  if (session === undefined) {
     return (
       <div className="min-h-screen bg-[#F1EFE8] font-sans flex items-center justify-center">
         <p className="text-sm text-slate-400">Loading...</p>
+      </div>
+    );
+  }
+
+  // No session — show the login/signup screen.
+  if (!session) {
+    return <AuthScreen onAuthed={() => {}} />;
+  }
+
+  if (!loaded) {
+    return (
+      <div className="min-h-screen bg-[#F1EFE8] font-sans flex items-center justify-center">
+        <p className="text-sm text-slate-400">Loading your records...</p>
       </div>
     );
   }
@@ -3978,6 +4056,7 @@ export default function HortiCheckApp() {
           onOpenRecord={openRecord}
           onOpenModuleStub={(key) => setView({ screen: 'stub', module: key })}
           onDeleteRecord={(id, siteName, status) => deleteRecord(id, siteName, status)}
+          onLogout={logout}
         />
       )}
       {view.screen === 'qa' && (
