@@ -376,6 +376,60 @@ function zoneProgress(zone) {
 const MAX_PHOTO_DIMENSION = 1600;
 const PHOTO_JPEG_QUALITY = 0.8;
 
+/* ---------------------------------------------------------------
+   Record export / import — lets a record (or all records) be moved
+   between devices as a file, without any backend/sync infrastructure.
+--------------------------------------------------------------- */
+
+function slugifyFilename(name) {
+  return (name || 'untitled').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'untitled';
+}
+
+function downloadJson(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportRecordToFile(record) {
+  const site = record.siteInfo?.site || 'record';
+  const date = record.siteInfo?.date || new Date().toISOString().slice(0, 10);
+  const filename = `HortiCheck_${record.module?.toUpperCase() || 'record'}_${slugifyFilename(site)}_${date}.json`;
+  downloadJson(filename, { type: 'horticheck-record', version: 1, record });
+}
+
+function exportAllRecordsToFile(records) {
+  const filename = `HortiCheck_AllRecords_${new Date().toISOString().slice(0, 10)}.json`;
+  downloadJson(filename, { type: 'horticheck-records', version: 1, records });
+}
+
+// Parses an imported file's contents and returns an array of records
+// (regardless of whether it was a single-record or bulk export), each
+// given a fresh ID so it's always added as a new entry rather than
+// colliding with / overwriting anything already present locally.
+function parseImportedRecords(fileText) {
+  const data = JSON.parse(fileText);
+  let records = [];
+  if (data.type === 'horticheck-record' && data.record) {
+    records = [data.record];
+  } else if (data.type === 'horticheck-records' && Array.isArray(data.records)) {
+    records = data.records;
+  } else {
+    throw new Error('This file does not look like a HortiCheck export.');
+  }
+  return records.map((r) => ({
+    ...r,
+    id: `${r.module || 'qa'}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  }));
+}
+
+
 function readFileAsImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1403,8 +1457,28 @@ async function exportQAPdf(record, options = {}) {
    Dashboard
 --------------------------------------------------------------- */
 
-function Dashboard({ records, onNewQA, onNewSA, onOpenPlantID, onOpenRecord, onOpenModuleStub, onDeleteRecord }) {
+function Dashboard({ records, onNewQA, onNewSA, onOpenPlantID, onOpenRecord, onOpenModuleStub, onDeleteRecord, onImportRecords }) {
   const [view, setView] = useState('list'); // list | calendar
+  const [showDataMenu, setShowDataMenu] = useState(false);
+  const [importError, setImportError] = useState('');
+  const importInputRef = useRef(null);
+
+  const handleImportFile = (file) => {
+    if (!file) return;
+    setImportError('');
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const imported = parseImportedRecords(reader.result);
+        onImportRecords(imported);
+        setShowDataMenu(false);
+      } catch (e) {
+        setImportError(e.message || 'Could not read that file.');
+      }
+    };
+    reader.onerror = () => setImportError('Could not read that file.');
+    reader.readAsText(file);
+  };
 
   const scheduled = records.filter((r) => r.status === 'scheduled');
   const inProgress = records.filter((r) => r.status === 'in_progress');
@@ -1459,7 +1533,41 @@ function Dashboard({ records, onNewQA, onNewSA, onOpenPlantID, onOpenRecord, onO
           </div>
           <span className="text-lg font-medium text-slate-800">HortiCheck</span>
         </div>
-        <Settings size={18} className="text-slate-400" />
+        <div className="flex items-center gap-1 relative">
+          <button onClick={() => setShowDataMenu((v) => !v)} aria-label="Import or export records" className="p-1.5">
+            <Settings size={18} className="text-slate-400" />
+          </button>
+          {showDataMenu && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setShowDataMenu(false)} />
+              <div className="absolute right-0 top-9 z-20 w-64 bg-white border border-slate-200 rounded-xl shadow-lg p-2">
+                <button
+                  onClick={() => { exportAllRecordsToFile(records); setShowDataMenu(false); }}
+                  disabled={records.length === 0}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed text-left"
+                >
+                  <Download size={14} className="text-slate-400" /> Export all records
+                </button>
+                <button
+                  onClick={() => importInputRef.current.click()}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 rounded-lg hover:bg-slate-50 text-left"
+                >
+                  <Save size={14} className="text-slate-400" /> Import record(s) from file
+                </button>
+                {importError && (
+                  <p className="text-xs text-red-600 px-3 pt-1 pb-1">{importError}</p>
+                )}
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => { handleImportFile(e.target.files[0]); e.target.value = ''; }}
+                />
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-2.5 mb-6">
@@ -2372,6 +2480,13 @@ function QAFlow({ record, onChange, onClose }) {
               </button>
             )}
           </div>
+
+          <button
+            onClick={() => exportRecordToFile(record)}
+            className="w-full py-2 rounded-lg text-xs text-slate-400 flex items-center justify-center gap-1.5"
+          >
+            <Save size={12} /> Export record as file (for transfer to another device)
+          </button>
 
           <button
             onClick={() => setIncludeRatings((v) => !v)}
@@ -3372,6 +3487,12 @@ function SAFlow({ record, onChange, onClose }) {
                 Submit
               </button>
             )}
+            <button
+              onClick={() => exportRecordToFile(record)}
+              className="w-full py-2 rounded-lg text-xs text-slate-400 flex items-center justify-center gap-1.5"
+            >
+              <Save size={12} /> Export record as file (for transfer to another device)
+            </button>
           </div>
         </>
       )}
@@ -3978,6 +4099,12 @@ export default function HortiCheckApp() {
           onOpenRecord={openRecord}
           onOpenModuleStub={(key) => setView({ screen: 'stub', module: key })}
           onDeleteRecord={(id, siteName, status) => deleteRecord(id, siteName, status)}
+          onImportRecords={(imported) => {
+            const migrated = imported.map((r) => {
+              try { return migrateRecord(r); } catch (e) { return r; }
+            });
+            setRecords((prev) => [...prev, ...migrated]);
+          }}
         />
       )}
       {view.screen === 'qa' && (
