@@ -6,8 +6,45 @@ import {
   List as ListIcon, Clock, CheckCircle2, PlayCircle, Image as ImageIcon,
   Minus, ThumbsUp, Search, Sparkles, Sun, Droplets, Thermometer, Info
 } from 'lucide-react';
-import { loadRecords, saveRecords, openPlantLibrary, savePlantLibrary } from './storage';
-import { supabase } from './supabaseClient';
+import { loadRecords, saveRecords } from './storage';
+
+// Separate IndexedDB helpers for the Plant ID library (stored under a
+// different key so it doesn't interfere with the QA/SA records array).
+async function openPlantLibrary() {
+  const db = await new Promise((resolve, reject) => {
+    const req = indexedDB.open('horticheck', 1);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+    req.onupgradeneeded = (e) => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('records')) d.createObjectStore('records');
+    };
+  });
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('records', 'readonly');
+    const req = tx.objectStore('records').get('plantLibrary');
+    req.onsuccess = () => resolve(req.result ?? []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function savePlantLibrary(lib) {
+  const db = await new Promise((resolve, reject) => {
+    const req = indexedDB.open('horticheck', 1);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+    req.onupgradeneeded = (e) => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('records')) d.createObjectStore('records');
+    };
+  });
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('records', 'readwrite');
+    const req = tx.objectStore('records').put(lib, 'plantLibrary');
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
 
 /* ---------------------------------------------------------------
    Shared constants
@@ -338,6 +375,60 @@ function zoneProgress(zone) {
 // browser has already accounted for.
 const MAX_PHOTO_DIMENSION = 1600;
 const PHOTO_JPEG_QUALITY = 0.8;
+
+/* ---------------------------------------------------------------
+   Record export / import — lets a record (or all records) be moved
+   between devices as a file, without any backend/sync infrastructure.
+--------------------------------------------------------------- */
+
+function slugifyFilename(name) {
+  return (name || 'untitled').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'untitled';
+}
+
+function downloadJson(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportRecordToFile(record) {
+  const site = record.siteInfo?.site || 'record';
+  const date = record.siteInfo?.date || new Date().toISOString().slice(0, 10);
+  const filename = `HortiCheck_${record.module?.toUpperCase() || 'record'}_${slugifyFilename(site)}_${date}.json`;
+  downloadJson(filename, { type: 'horticheck-record', version: 1, record });
+}
+
+function exportAllRecordsToFile(records) {
+  const filename = `HortiCheck_AllRecords_${new Date().toISOString().slice(0, 10)}.json`;
+  downloadJson(filename, { type: 'horticheck-records', version: 1, records });
+}
+
+// Parses an imported file's contents and returns an array of records
+// (regardless of whether it was a single-record or bulk export), each
+// given a fresh ID so it's always added as a new entry rather than
+// colliding with / overwriting anything already present locally.
+function parseImportedRecords(fileText) {
+  const data = JSON.parse(fileText);
+  let records = [];
+  if (data.type === 'horticheck-record' && data.record) {
+    records = [data.record];
+  } else if (data.type === 'horticheck-records' && Array.isArray(data.records)) {
+    records = data.records;
+  } else {
+    throw new Error('This file does not look like a HortiCheck export.');
+  }
+  return records.map((r) => ({
+    ...r,
+    id: `${r.module || 'qa'}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  }));
+}
+
 
 function readFileAsImage(file) {
   return new Promise((resolve, reject) => {
@@ -1366,8 +1457,28 @@ async function exportQAPdf(record, options = {}) {
    Dashboard
 --------------------------------------------------------------- */
 
-function Dashboard({ records, onNewQA, onNewSA, onOpenPlantID, onOpenRecord, onOpenModuleStub, onDeleteRecord, onLogout }) {
+function Dashboard({ records, onNewQA, onNewSA, onOpenPlantID, onOpenRecord, onOpenModuleStub, onDeleteRecord, onImportRecords }) {
   const [view, setView] = useState('list'); // list | calendar
+  const [showDataMenu, setShowDataMenu] = useState(false);
+  const [importError, setImportError] = useState('');
+  const importInputRef = useRef(null);
+
+  const handleImportFile = (file) => {
+    if (!file) return;
+    setImportError('');
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const imported = parseImportedRecords(reader.result);
+        onImportRecords(imported);
+        setShowDataMenu(false);
+      } catch (e) {
+        setImportError(e.message || 'Could not read that file.');
+      }
+    };
+    reader.onerror = () => setImportError('Could not read that file.');
+    reader.readAsText(file);
+  };
 
   const scheduled = records.filter((r) => r.status === 'scheduled');
   const inProgress = records.filter((r) => r.status === 'in_progress');
@@ -1422,9 +1533,41 @@ function Dashboard({ records, onNewQA, onNewSA, onOpenPlantID, onOpenRecord, onO
           </div>
           <span className="text-lg font-medium text-slate-800">HortiCheck</span>
         </div>
-        <button onClick={onLogout} aria-label="Log out" className="p-1.5 -mr-1.5">
-          <Settings size={18} className="text-slate-400" />
-        </button>
+        <div className="flex items-center gap-1 relative">
+          <button onClick={() => setShowDataMenu((v) => !v)} aria-label="Import or export records" className="p-1.5">
+            <Settings size={18} className="text-slate-400" />
+          </button>
+          {showDataMenu && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setShowDataMenu(false)} />
+              <div className="absolute right-0 top-9 z-20 w-64 bg-white border border-slate-200 rounded-xl shadow-lg p-2">
+                <button
+                  onClick={() => { exportAllRecordsToFile(records); setShowDataMenu(false); }}
+                  disabled={records.length === 0}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed text-left"
+                >
+                  <Download size={14} className="text-slate-400" /> Export all records
+                </button>
+                <button
+                  onClick={() => importInputRef.current.click()}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 rounded-lg hover:bg-slate-50 text-left"
+                >
+                  <Save size={14} className="text-slate-400" /> Import record(s) from file
+                </button>
+                {importError && (
+                  <p className="text-xs text-red-600 px-3 pt-1 pb-1">{importError}</p>
+                )}
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => { handleImportFile(e.target.files[0]); e.target.value = ''; }}
+                />
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-2.5 mb-6">
@@ -2337,6 +2480,13 @@ function QAFlow({ record, onChange, onClose }) {
               </button>
             )}
           </div>
+
+          <button
+            onClick={() => exportRecordToFile(record)}
+            className="w-full py-2 rounded-lg text-xs text-slate-400 flex items-center justify-center gap-1.5"
+          >
+            <Save size={12} /> Export record as file (for transfer to another device)
+          </button>
 
           <button
             onClick={() => setIncludeRatings((v) => !v)}
@@ -3337,6 +3487,12 @@ function SAFlow({ record, onChange, onClose }) {
                 Submit
               </button>
             )}
+            <button
+              onClick={() => exportRecordToFile(record)}
+              className="w-full py-2 rounded-lg text-xs text-slate-400 flex items-center justify-center gap-1.5"
+            >
+              <Save size={12} /> Export record as file (for transfer to another device)
+            </button>
           </div>
         </>
       )}
@@ -3777,119 +3933,10 @@ function ModuleStub({ moduleKey, onClose }) {
    Root app
 --------------------------------------------------------------- */
 
-/* ---------------------------------------------------------------
-   Auth screen — email/password login and signup via Supabase
---------------------------------------------------------------- */
-
-function AuthScreen({ onAuthed }) {
-  const [mode, setMode] = useState('login'); // 'login' | 'signup'
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setMessage('');
-    setLoading(true);
-    try {
-      if (mode === 'login') {
-        const { error: err } = await supabase.auth.signInWithPassword({ email, password });
-        if (err) throw err;
-        onAuthed();
-      } else {
-        const { error: err } = await supabase.auth.signUp({ email, password });
-        if (err) throw err;
-        setMessage('Account created. Check your email to confirm, then log in.');
-        setMode('login');
-      }
-    } catch (err) {
-      setError(err.message || 'Something went wrong. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-[#F1EFE8] font-sans flex items-center justify-center p-6">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-[#0F6E56] flex items-center justify-center mx-auto mb-3">
-            <ClipboardCheck size={26} className="text-white" />
-          </div>
-          <h1 className="text-xl font-bold text-slate-800">HortiCheck</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            {mode === 'login' ? 'Log in to your account' : 'Create an account'}
-          </p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3">
-          <div>
-            <label className="text-xs font-medium text-slate-400 uppercase tracking-wide block mb-1">Email</label>
-            <input
-              type="email" required autoComplete="email"
-              value={email} onChange={(e) => setEmail(e.target.value)}
-              className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-teal-400"
-              placeholder="you@example.com"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-400 uppercase tracking-wide block mb-1">Password</label>
-            <input
-              type="password" required autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              value={password} onChange={(e) => setPassword(e.target.value)}
-              minLength={6}
-              className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-teal-400"
-              placeholder="••••••••"
-            />
-          </div>
-
-          {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
-          {message && <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{message}</p>}
-
-          <button
-            type="submit" disabled={loading}
-            className="w-full py-2.5 rounded-lg bg-teal-600 text-white text-sm font-medium disabled:opacity-50"
-          >
-            {loading ? 'Please wait...' : mode === 'login' ? 'Log in' : 'Sign up'}
-          </button>
-        </form>
-
-        <button
-          onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setMessage(''); }}
-          className="w-full text-center text-sm text-slate-500 mt-4"
-        >
-          {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-          <span className="text-teal-700 font-medium">{mode === 'login' ? 'Sign up' : 'Log in'}</span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-
 export default function HortiCheckApp() {
   const [records, setRecords] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState({ screen: 'dashboard' }); // { screen: 'dashboard' } | { screen: 'qa', id } | { screen: 'stub', module }
-  const [session, setSession] = useState(undefined); // undefined = checking, null = logged out, object = logged in
-
-  // Check for an existing Supabase session on mount, and subscribe to changes.
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      if (!newSession) {
-        // Logged out — clear local state so no data leaks between accounts.
-        setRecords([]);
-        setLoaded(false);
-        setView({ screen: 'dashboard' });
-      }
-    });
-    return () => listener.subscription.unsubscribe();
-  }, []);
 
   // Migrates a single photo object from the old boolean `flagged` field
   // (pre-dating separate issue/good-practice flags) to the new `flagType`.
@@ -3957,11 +4004,9 @@ export default function HortiCheckApp() {
     };
   };
 
-  // Load saved records from Supabase once logged in.
+  // Load saved records from IndexedDB on first mount.
   useEffect(() => {
-    if (!session) return;
     let cancelled = false;
-    setLoaded(false);
     loadRecords().then((saved) => {
       if (cancelled) return;
       if (saved && Array.isArray(saved) && saved.length > 0) {
@@ -3975,18 +4020,35 @@ export default function HortiCheckApp() {
         }, []);
         setRecords(migrated.length > 0 ? migrated : saved);
       } else {
-        setRecords([]);
+        // First run / nothing saved yet — seed with a sample record.
+        const sample = newQARecord({
+          status: 'completed',
+          siteInfo: {
+            client: 'Acme Property Group',
+            site: 'Bishopsgate Tower',
+            address: '150 Bishopsgate, London EC2M 4AT',
+            technicians: 'J. Carter, M. Osei',
+            lastService: '2026-06-02',
+            inspector: 'R. Allen',
+            date: '2026-06-09',
+          },
+        });
+        const z = newZone('Reception');
+        z.categories.plantHealth = { rating: 'Good', feedback: CATEGORIES[0].paragraphs.Good, notes: '', photos: [] };
+        z.categories.containers = { rating: 'Excellent', feedback: CATEGORIES[1].paragraphs.Excellent, notes: '', photos: [] };
+        sample.zones = [z];
+        setRecords([sample]);
       }
       setLoaded(true);
     });
     return () => { cancelled = true; };
-  }, [session]);
+  }, []);
 
-  // Persist to Supabase whenever records change (after initial load).
+  // Persist to IndexedDB whenever records change (after initial load).
   useEffect(() => {
-    if (!loaded || !session) return;
+    if (!loaded) return;
     saveRecords(records);
-  }, [records, loaded, session]);
+  }, [records, loaded]);
 
   const openRecord = (id) => {
     const record = records.find((r) => r.id === id);
@@ -4018,29 +4080,10 @@ export default function HortiCheckApp() {
     setRecords((prev) => prev.filter((r) => r.id !== id));
   };
 
-  const logout = async () => {
-    if (!window.confirm('Log out of HortiCheck?')) return;
-    await supabase.auth.signOut();
-  };
-
-  // Still checking for an existing session.
-  if (session === undefined) {
-    return (
-      <div className="min-h-screen bg-[#F1EFE8] font-sans flex items-center justify-center">
-        <p className="text-sm text-slate-400">Loading...</p>
-      </div>
-    );
-  }
-
-  // No session — show the login/signup screen.
-  if (!session) {
-    return <AuthScreen onAuthed={() => {}} />;
-  }
-
   if (!loaded) {
     return (
       <div className="min-h-screen bg-[#F1EFE8] font-sans flex items-center justify-center">
-        <p className="text-sm text-slate-400">Loading your records...</p>
+        <p className="text-sm text-slate-400">Loading...</p>
       </div>
     );
   }
@@ -4056,7 +4099,12 @@ export default function HortiCheckApp() {
           onOpenRecord={openRecord}
           onOpenModuleStub={(key) => setView({ screen: 'stub', module: key })}
           onDeleteRecord={(id, siteName, status) => deleteRecord(id, siteName, status)}
-          onLogout={logout}
+          onImportRecords={(imported) => {
+            const migrated = imported.map((r) => {
+              try { return migrateRecord(r); } catch (e) { return r; }
+            });
+            setRecords((prev) => [...prev, ...migrated]);
+          }}
         />
       )}
       {view.screen === 'qa' && (
