@@ -502,6 +502,28 @@ function newSARecord(overrides = {}) {
 
 const SA_POT_SIZES = ['9cm','10cm','12cm','14cm','15cm','17cm','19cm','21cm','24cm','28cm','1m','1.2m','1.5m','Other'];
 
+const SA_SPECIES_LIST = [
+  'Aglaonema Crete', 'Aglaonema Silver Bay', 'Aglaonema Stripes', 'Alocasia',
+  'Anthurium', 'Anthurium Plowmanii', 'Areca Palm', 'Asparagus Fern',
+  'Aspidistra Elatior', 'Asplenium Antiquum', 'Asplenium Nidus',
+  'Chamaedorea Elegans', 'Chamaedorea Metallica', 'Chlorophytum Comosum',
+  'Cordyline Glauca', 'Cordyline Kiwi', 'Cordyline Mambo', 'Cordyline Tango',
+  'Crasula Ovata', 'Croton Iceton', 'Croton Mami', 'Croton Petra',
+  'Dieffenbachia', 'Dracena Compacta', 'Dracena Dorado', 'Dracena Janet Craig',
+  'Dracena Lemon and Lime', 'Dracena Marginata', 'Dracena Riki', 'Dracena White Stripe',
+  'Echiveria', 'Elastica Belize', 'Elastica Robusta', 'Elastica Tineke',
+  'Epipremnum Aureum', 'Ficus Benghalensis', 'Ficus Benjamina', 'Ficus Cyathistipula',
+  'Ficus Ginseng', 'Ficus Lyrata', 'Guzmania Red', 'Guzmania White', 'Guzmania Yellow',
+  'Kentia', 'Living Picture Plants', 'Mix Aglaonema Green', 'Mix Aglaonema Red',
+  'Monstera Adansonii', 'Monstera Deliciosa', 'Monstera Deliciosa Moss Pole',
+  'Orchid (Phalaenopsis)', 'Philodendron Green Congo', 'Philodendron Imperial Green',
+  'Philodendron Imperial Red', 'Philodendron Red Congo', 'Philodendron Scandens',
+  'Sansevieria Cylindrica', 'Sansevieria Fernwood', 'Sansevieria Hahnii',
+  'Sansevieria Laurentii', 'Sansevieria Moonshine', 'Sansevieria Zeylanica',
+  'Schefflera Amate', 'Schefflera Arboricola', 'Scindapsus Pictus', 'Spathiphyllum',
+  'Strelitzia', 'Succulent', 'Zamioculcas Zamiifolia', 'Zamioculcas Zenzii',
+];
+
 const SA_RATINGS = ['Excellent', 'Good', 'Fair', 'Needs work', 'Below standard'];
 
 const SA_RATING_STYLES = {
@@ -561,10 +583,10 @@ function generateSAOverallSummary(record) {
     if (totalContainers > 0) bits.push(`${totalContainers} container${totalContainers === 1 ? '' : 's'}`);
     parts.push(`The site contains a total of ${bits.join(' across ')}.`);
   }
-  const totalReplacements = record.zones.reduce((s, z) => s + saReplacementTotal(z.replacementRows), 0);
+  const totalReplacements = record.zones.reduce((s, z) => s + saReplacementTotal(z), 0);
   if (totalReplacements > 0) {
-    const breakdown = record.zones.filter((z) => saReplacementTotal(z.replacementRows) > 0)
-      .map((z) => `${z.name} (${saReplacementSummary(z.replacementRows)})`).join(', ');
+    const breakdown = record.zones.filter((z) => saReplacementTotal(z) > 0)
+      .map((z) => `${z.name} (${saReplacementSummary(z)})`).join(', ');
     parts.push(`A total of ${totalReplacements} plant${totalReplacements === 1 ? '' : 's'} ${totalReplacements === 1 ? 'requires' : 'require'} replacement: ${breakdown}.`);
   }
   const pestZones = record.zones.filter((z) => z.pests === 'Yes').map((z) => z.name);
@@ -582,14 +604,56 @@ function newSAReplacementRow() {
   return { id: `rr-${Date.now()}-${Math.random().toString(36).slice(2)}`, qty: '', potSize: '9cm', customSize: '' };
 }
 
-function saReplacementTotal(rows) {
-  return (rows || []).reduce((s, r) => s + (parseInt(r.qty, 10) || 0), 0);
+// Combines manual replacement rows with any replacement photos that have a
+// quantity entered, into one list of { qty, potSize, species } entries.
+function saReplacementEntries(zone) {
+  const rows = (zone?.replacementRows || [])
+    .filter((r) => parseInt(r.qty, 10) > 0)
+    .map((r) => ({
+      qty: parseInt(r.qty, 10),
+      potSize: r.potSize === 'Other' ? (r.customSize || 'Other') : r.potSize,
+      species: '',
+    }));
+  const photoEntries = (zone?.replacementPhotos || [])
+    .filter((p) => parseInt(p.quantity, 10) > 0)
+    .map((p) => ({
+      qty: parseInt(p.quantity, 10),
+      potSize: p.potSize ? (p.potSize === 'Other' ? (p.customSize || 'Other') : p.potSize) : '',
+      species: (p.species || '').trim(),
+    }));
+  return [...rows, ...photoEntries];
 }
 
-function saReplacementSummary(rows) {
-  const valid = (rows || []).filter((r) => parseInt(r.qty, 10) > 0);
-  if (!valid.length) return '';
-  return valid.map((r) => `${r.qty} × ${r.potSize === 'Other' ? (r.customSize || 'Other') : r.potSize}`).join(', ');
+function saReplacementTotal(zone) {
+  return saReplacementEntries(zone).reduce((s, e) => s + e.qty, 0);
+}
+
+function saReplacementSummary(zone) {
+  const entries = saReplacementEntries(zone);
+  if (!entries.length) return '';
+  return entries.map((e) => {
+    if (e.species && e.potSize) return `${e.qty} × ${e.species} (${e.potSize})`;
+    if (e.species) return `${e.qty} × ${e.species}`;
+    if (e.potSize) return `${e.qty} × ${e.potSize}`;
+    return `${e.qty}`;
+  }).join(', ');
+}
+
+// Every replacement entry across the whole site, labelled by zone — used
+// for the bulleted list on the report's overall site summary / PDF cover.
+function saAllReplacementBullets(zones) {
+  const bullets = [];
+  zones.forEach((z) => {
+    saReplacementEntries(z).forEach((e) => {
+      let text;
+      if (e.species && e.potSize) text = `${z.name}: ${e.qty} × ${e.species} (${e.potSize})`;
+      else if (e.species) text = `${z.name}: ${e.qty} × ${e.species}`;
+      else if (e.potSize) text = `${z.name}: ${e.qty} × ${e.potSize}`;
+      else text = `${z.name}: ${e.qty}`;
+      bullets.push(text);
+    });
+  });
+  return bullets;
 }
 
 function newSAZone(name) {
@@ -2580,6 +2644,21 @@ async function exportSAPdf(record, options = {}) {
     });
   };
 
+  const drawBulletedList = (items, headerTitle) => {
+    const bulletIndent = 5;
+    items.forEach((item) => {
+      const text = (item || '').trim();
+      if (!text) return;
+      const lines = doc.splitTextToSize(text, pageW - margin * 2 - bulletIndent);
+      lines.forEach((line, i) => {
+        if (y > pageH - margin) { doc.addPage(); addHeaderBar(headerTitle); }
+        if (i === 0) doc.text('\u2022', margin, y);
+        doc.text(line, margin + bulletIndent, y);
+        y += 5.5;
+      });
+    });
+  };
+
   // Cover page
   doc.setFillColor(...SA_ACCENT);
   doc.rect(0, 0, pageW, 60, 'F');
@@ -2608,6 +2687,16 @@ async function exportSAPdf(record, options = {}) {
     drawWrappedText(record.overallNotes, siteInfo.site || '');
   }
 
+  const replacementBullets = saAllReplacementBullets(zones);
+  if (replacementBullets.length > 0) {
+    y += 6;
+    doc.setFont(undefined, 'bold'); doc.setFontSize(12); doc.setTextColor(20, 20, 20);
+    if (y > pageH - margin) { doc.addPage(); addHeaderBar(siteInfo.site || ''); }
+    doc.text('Plant replacements', margin, y); y += 7;
+    doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
+    drawBulletedList(replacementBullets, siteInfo.site || '');
+  }
+
   // Per-zone pages
   zones.forEach((zone) => {
     doc.addPage();
@@ -2626,7 +2715,7 @@ async function exportSAPdf(record, options = {}) {
 
     [['Plants', zone.plants || '-'], ['Containers', zone.containers || '-'],
      ['Signs of pests', zone.pests || '-'],
-     ['Replacements required', saReplacementTotal(zone.replacementRows) > 0 ? `${saReplacementTotal(zone.replacementRows)} (${saReplacementSummary(zone.replacementRows)})` : '-'],
+     ['Replacements required', saReplacementTotal(zone) > 0 ? `${saReplacementTotal(zone)} (${saReplacementSummary(zone)})` : '-'],
      ['H&S hazards (not in RAMs)', zone.hazards || '-']].forEach(([label, val]) => {
       doc.setFont(undefined, 'normal'); doc.setTextColor(60, 60, 60);
       doc.text(label, margin, y);
@@ -2668,9 +2757,19 @@ async function exportSAPdf(record, options = {}) {
         if (x + imgW > pageW - margin) { x = margin; y += rowMaxH + 12; rowMaxH = 0; }
         if (y + imgH + 8 > pageH - margin) { doc.addPage(); addHeaderBar(siteInfo.site || ''); x = margin; y = 24; }
         try { doc.addImage(src, 'JPEG', x, y, imgW, imgH); } catch (e) {}
+        let labelY = y + imgH + 4;
+        if (label === 'Replacement photos' && parseInt(photo.quantity, 10) > 0) {
+          const potSize = photo.potSize === 'Other' ? (photo.customSize || 'Other') : photo.potSize;
+          const detail = photo.species
+            ? `${photo.quantity} × ${photo.species}${potSize ? ` (${potSize})` : ''}`
+            : `${photo.quantity}${potSize ? ` × ${potSize}` : ''}`;
+          doc.setFontSize(8); doc.setTextColor(60, 60, 60); doc.setFont(undefined, 'bold');
+          doc.text(detail, x, labelY);
+          labelY += 4;
+        }
         if (photo.caption) {
           doc.setFontSize(8); doc.setTextColor(100, 100, 100); doc.setFont(undefined, 'normal');
-          doc.text(photo.caption.slice(0, 60), x, y + imgH + 4);
+          doc.text(photo.caption.slice(0, 60), x, labelY);
         }
         rowMaxH = Math.max(rowMaxH, imgH); x += imgW + 8;
       });
@@ -2708,9 +2807,9 @@ function generateSASummary(zone) {
     parts.push('Signs of pest activity were identified and have been recorded.');
   }
 
-  const total = saReplacementTotal(zone.replacementRows);
+  const total = saReplacementTotal(zone);
   if (total > 0) {
-    const breakdown = saReplacementSummary(zone.replacementRows);
+    const breakdown = saReplacementSummary(zone);
     parts.push(`${total} plant${total === 1 ? '' : 's'} ${total === 1 ? 'has' : 'have'} been identified as requiring replacement${breakdown ? `: ${breakdown}` : ''}.`);
   }
 
@@ -2727,7 +2826,75 @@ function generateSASummary(zone) {
   return parts.join(' ');
 }
 
-function SAPhotoRow({ photos, onAdd, onAnnotate, onRemove, onCaptionChange, readOnly }) {
+// Searchable species field — filters SA_SPECIES_LIST as you type, shows the
+// full alphabetical list when tapped while empty, and falls back to
+// whatever was typed if nothing on the list matches.
+function SpeciesAutocomplete({ value, onChange, readOnly }) {
+  const [text, setText] = useState(value || '');
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  const prevRef = useRef(value);
+
+  useEffect(() => {
+    if (value !== prevRef.current) {
+      setText(value || '');
+      prevRef.current = value;
+    }
+  }, [value]);
+
+  useEffect(() => {
+    const handleOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setOpen(false);
+        onChange(text);
+      }
+    };
+    if (open) document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [open, text]);
+
+  const matches = SA_SPECIES_LIST.filter((s) => s.toLowerCase().includes(text.trim().toLowerCase()));
+
+  const select = (species) => {
+    setText(species);
+    setOpen(false);
+    onChange(species);
+  };
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <input
+        type="text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onFocus={() => setOpen(true)}
+        readOnly={readOnly}
+        placeholder="Species (optional)"
+        className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+      />
+      {open && !readOnly && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-white border border-slate-300 rounded-lg max-h-44 overflow-y-auto shadow-lg">
+          {matches.length > 0 ? (
+            matches.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); select(s); }}
+                className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 ${s.toLowerCase() === text.trim().toLowerCase() ? 'bg-blue-50 text-blue-700' : 'text-slate-700'}`}
+              >
+                {s}
+              </button>
+            ))
+          ) : (
+            <p className="px-3 py-2 text-xs text-slate-400">No match — will be saved as typed</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SAPhotoRow({ photos, onAdd, onAnnotate, onRemove, onCaptionChange, onFieldChange, showReplacementFields, readOnly }) {
   const cameraRef = useRef(null);
   const galleryRef = useRef(null);
   return (
@@ -2749,7 +2916,49 @@ function SAPhotoRow({ photos, onAdd, onAnnotate, onRemove, onCaptionChange, read
               </div>
             )}
           </div>
-          <CaptionInput value={photo.caption || ''} onChange={(val) => onCaptionChange(photo.id, val)} readOnly={readOnly} />
+          <div className="flex-1 flex flex-col gap-1.5">
+            {showReplacementFields && (
+              <>
+                <SpeciesAutocomplete
+                  value={photo.species || ''}
+                  onChange={(val) => onFieldChange(photo.id, { species: val })}
+                  readOnly={readOnly}
+                />
+                <div className="flex gap-1.5">
+                  <select
+                    value={photo.potSize || '9cm'}
+                    onChange={(e) => onFieldChange(photo.id, { potSize: e.target.value, customSize: '' })}
+                    disabled={readOnly}
+                    className="flex-1 text-sm border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  >
+                    {SA_POT_SIZES.map((s) => <option key={s}>{s}</option>)}
+                  </select>
+                  <input
+                    key={`qty-${photo.id}-${photo.quantity}`}
+                    type="number" min="0"
+                    defaultValue={photo.quantity || ''}
+                    onFocus={(e) => e.target.select()}
+                    onBlur={(e) => onFieldChange(photo.id, { quantity: e.target.value })}
+                    readOnly={readOnly}
+                    placeholder="Qty"
+                    className="w-16 text-sm text-center border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </div>
+                {photo.potSize === 'Other' && (
+                  <input
+                    key={`cs-${photo.id}-${photo.customSize}`}
+                    type="text"
+                    defaultValue={photo.customSize || ''}
+                    onBlur={(e) => onFieldChange(photo.id, { customSize: e.target.value })}
+                    readOnly={readOnly}
+                    placeholder="Specify pot size"
+                    className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                )}
+              </>
+            )}
+            <CaptionInput value={photo.caption || ''} onChange={(val) => onCaptionChange(photo.id, val)} readOnly={readOnly} />
+          </div>
         </div>
       ))}
       {!readOnly && (
@@ -2798,7 +3007,11 @@ function SAFlow({ record, onChange, onClose }) {
     for (const file of Array.from(files)) {
       try {
         const { src, width, height } = await readFileAsImage(file);
-        newPhotos.push({ id: `p-${Date.now()}-${Math.random().toString(36).slice(2)}`, src, width, height, annotatedSrc: null, caption: '' });
+        newPhotos.push({
+          id: `p-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          src, width, height, annotatedSrc: null, caption: '',
+          species: '', potSize: '9cm', customSize: '', quantity: '',
+        });
       } catch (e) {}
     }
     if (!newPhotos.length) return;
@@ -2808,6 +3021,7 @@ function SAFlow({ record, onChange, onClose }) {
 
   const removePhoto = (zoneIdx, field, photoId) => updateZone(zoneIdx, (z) => ({ ...z, [field]: (z[field] || []).filter((p) => p.id !== photoId) }));
   const setCaption = (zoneIdx, field, photoId, caption) => updateZone(zoneIdx, (z) => ({ ...z, [field]: (z[field] || []).map((p) => p.id === photoId ? { ...p, caption } : p) }));
+  const setPhotoField = (zoneIdx, field, photoId, patch) => updateZone(zoneIdx, (z) => ({ ...z, [field]: (z[field] || []).map((p) => p.id === photoId ? { ...p, ...patch } : p) }));
   const saveAnnotation = (zoneIdx, field, photoId, dataUrl) => {
     updateZone(zoneIdx, (z) => ({ ...z, [field]: (z[field] || []).map((p) => p.id === photoId ? { ...p, annotatedSrc: dataUrl } : p) }));
     setAnnotating(null);
@@ -3074,8 +3288,8 @@ function SAFlow({ record, onChange, onClose }) {
               <button onClick={() => toggleSection('replacements')} className="w-full flex items-center justify-between px-4 py-3 text-left">
                 <span className="text-sm font-medium text-slate-800">Replacements required</span>
                 <span className="flex items-center gap-2">
-                  {saReplacementTotal(currentZone.replacementRows) > 0 && (
-                    <span className="text-xs font-semibold text-blue-700">{saReplacementTotal(currentZone.replacementRows)} total</span>
+                  {saReplacementTotal(currentZone) > 0 && (
+                    <span className="text-xs font-semibold text-blue-700">{saReplacementTotal(currentZone)} total</span>
                   )}
                   {(currentZone.replacementPhotos || []).length > 0 && <span className="text-xs text-slate-400 flex items-center gap-0.5"><Camera size={11} /> {currentZone.replacementPhotos.length}</span>}
                   {expandedSection === 'replacements' ? <ChevronDown size={16} className="text-slate-400" /> : <ChevronRight size={16} className="text-slate-400" />}
@@ -3157,10 +3371,10 @@ function SAFlow({ record, onChange, onClose }) {
                       <Plus size={13} /> Add pot size
                     </button>
                   )}
-                  {saReplacementTotal(currentZone.replacementRows) > 0 && (
+                  {saReplacementTotal(currentZone) > 0 && (
                     <div className="flex items-center justify-between px-1 pt-1 border-t border-slate-100">
                       <span className="text-xs text-slate-500">Total</span>
-                      <span className="text-sm font-semibold text-blue-700">{saReplacementTotal(currentZone.replacementRows)}</span>
+                      <span className="text-sm font-semibold text-blue-700">{saReplacementTotal(currentZone)}</span>
                     </div>
                   )}
                   <SAPhotoRow photos={currentZone.replacementPhotos || []}
@@ -3168,6 +3382,8 @@ function SAFlow({ record, onChange, onClose }) {
                     onAnnotate={(photo) => setAnnotating({ zoneIdx: currentZoneIdx, field: 'replacementPhotos', photo })}
                     onRemove={(id) => removePhoto(currentZoneIdx, 'replacementPhotos', id)}
                     onCaptionChange={(id, cap) => setCaption(currentZoneIdx, 'replacementPhotos', id, cap)}
+                    onFieldChange={(id, patch) => setPhotoField(currentZoneIdx, 'replacementPhotos', id, patch)}
+                    showReplacementFields
                     readOnly={readOnly} />
                 </div>
               )}
@@ -3392,7 +3608,7 @@ function SAFlow({ record, onChange, onClose }) {
               {(() => {
                 const totalPlants = record.zones.reduce((s, z) => s + (parseInt(z.plants, 10) || 0), 0);
                 const totalContainers = record.zones.reduce((s, z) => s + (parseInt(z.containers, 10) || 0), 0);
-                const totalReplacements = record.zones.reduce((s, z) => s + saReplacementTotal(z.replacementRows), 0);
+                const totalReplacements = record.zones.reduce((s, z) => s + saReplacementTotal(z), 0);
                 const zonesWithPests = record.zones.filter((z) => z.pests === 'Yes').map((z) => z.name);
                 const zonesWithHazards = record.zones.filter((z) => z.hazards === 'Yes').map((z) => z.name);
                 return (
@@ -3402,10 +3618,10 @@ function SAFlow({ record, onChange, onClose }) {
                     <div className="flex justify-between"><span className="text-slate-500">Total replacements</span><span className="font-medium text-slate-800">{totalReplacements || '-'}</span></div>
                     {totalReplacements > 0 && (
                       <div className="pt-1 border-t border-slate-100 space-y-1">
-                        {record.zones.filter((z) => saReplacementTotal(z.replacementRows) > 0).map((z) => (
+                        {record.zones.filter((z) => saReplacementTotal(z) > 0).map((z) => (
                           <div key={z.id} className="flex justify-between text-xs">
                             <span className="text-slate-400">{z.name}</span>
-                            <span className="text-slate-600">{saReplacementSummary(z.replacementRows)} ({saReplacementTotal(z.replacementRows)} total)</span>
+                            <span className="text-slate-600">{saReplacementSummary(z)} ({saReplacementTotal(z)} total)</span>
                           </div>
                         ))}
                       </div>
@@ -3457,7 +3673,7 @@ function SAFlow({ record, onChange, onClose }) {
                     <p className="text-sm font-medium text-slate-800">{z.name}</p>
                     <p className="text-xs text-slate-400 mt-0.5">
                       {[z.plants && `${z.plants} plants`, z.containers && `${z.containers} containers`,
-                        saReplacementTotal(z.replacementRows) > 0 && `${saReplacementTotal(z.replacementRows)} replacements`,
+                        saReplacementTotal(z) > 0 && `${saReplacementTotal(z)} replacements`,
                         ((z.zonePhotos || []).length + (z.pestPhotos || []).length + (z.replacementPhotos || []).length + (z.notePhotos || []).length + (z.hazardPhotos || []).length) > 0 &&
                           `${(z.zonePhotos || []).length + (z.pestPhotos || []).length + (z.replacementPhotos || []).length + (z.notePhotos || []).length + (z.hazardPhotos || []).length} photos`
                       ].filter(Boolean).join(' · ') || 'No data yet'}
