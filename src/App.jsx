@@ -656,6 +656,17 @@ function saAllReplacementBullets(zones) {
   return bullets;
 }
 
+// Same as above but scoped to one zone, without the zone-name prefix —
+// used on that zone's own PDF page.
+function saZoneReplacementBullets(zone) {
+  return saReplacementEntries(zone).map((e) => {
+    if (e.species && e.potSize) return `${e.qty} × ${e.species} (${e.potSize})`;
+    if (e.species) return `${e.qty} × ${e.species}`;
+    if (e.potSize) return `${e.qty} × ${e.potSize}`;
+    return `${e.qty}`;
+  });
+}
+
 function newSAZone(name) {
   return {
     id: `sazone-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -2736,12 +2747,21 @@ async function exportSAPdf(record, options = {}) {
 
     y += 10;
     doc.setFontSize(10);
-    if (zone.notes || zone.summary) {
+    const zoneReplacementBullets = saZoneReplacementBullets(zone);
+    if (zone.notes || zone.summary || zoneReplacementBullets.length > 0) {
       if (zone.summary) {
         doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
         doc.text('Summary', margin, y); y += 6;
         doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
         drawWrappedText(zone.summary, siteInfo.site || '');
+        y += 4;
+      }
+      if (zoneReplacementBullets.length > 0) {
+        if (y > pageH - margin) { doc.addPage(); addHeaderBar(siteInfo.site || ''); }
+        doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
+        doc.text('Replacements', margin, y); y += 6;
+        doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
+        drawBulletedList(zoneReplacementBullets, siteInfo.site || '');
         y += 4;
       }
       if (zone.notes) {
