@@ -2695,6 +2695,15 @@ async function exportSAPdf(record, options = {}) {
     doc.text('Plant replacements', margin, y); y += 7;
     doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
     drawBulletedList(replacementBullets, siteInfo.site || '');
+
+    const totalReplacements = zones.reduce((s, z) => s + saReplacementTotal(z), 0);
+    y += 3;
+    if (y > pageH - margin) { doc.addPage(); addHeaderBar(siteInfo.site || ''); }
+    doc.setDrawColor(220, 220, 220); doc.line(margin, y, pageW - margin, y); y += 6;
+    doc.setFont(undefined, 'bold'); doc.setFontSize(10.5); doc.setTextColor(20, 20, 20);
+    doc.text('Total replacements', margin, y);
+    doc.text(String(totalReplacements), pageW - margin, y, { align: 'right' });
+    y += 7;
   }
 
   // Per-zone pages
