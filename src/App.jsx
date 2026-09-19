@@ -601,7 +601,7 @@ function generateSAOverallSummary(record) {
 }
 
 function newSAReplacementRow() {
-  return { id: `rr-${Date.now()}-${Math.random().toString(36).slice(2)}`, qty: '', potSize: '9cm', customSize: '' };
+  return { id: `rr-${Date.now()}-${Math.random().toString(36).slice(2)}`, qty: '', potSize: '9cm', customSize: '', species: '', notes: '' };
 }
 
 // Combines manual replacement rows with any replacement photos that have a
@@ -612,7 +612,7 @@ function saReplacementEntries(zone) {
     .map((r) => ({
       qty: parseInt(r.qty, 10),
       potSize: r.potSize === 'Other' ? (r.customSize || 'Other') : r.potSize,
-      species: '',
+      species: (r.species || '').trim(),
     }));
   const photoEntries = (zone?.replacementPhotos || [])
     .filter((p) => parseInt(p.quantity, 10) > 0)
@@ -2702,30 +2702,32 @@ async function exportSAPdf(record, options = {}) {
     doc.addPage();
     addHeaderBar(siteInfo.site || '');
     doc.setFontSize(15); doc.setFont(undefined, 'bold'); doc.setTextColor(20, 20, 20);
-    doc.text(zone.name, margin, y); y += 10;
-    doc.setFontSize(10);
+    doc.text(zone.name, margin, y);
 
     if (includeRatings && zone.rating) {
-      doc.setFont(undefined, 'normal'); doc.setTextColor(60, 60, 60);
-      doc.text('Overall condition', margin, y);
-      doc.setFont(undefined, 'bold'); doc.setTextColor(40, 40, 40);
-      doc.text(zone.rating, pageW - margin, y, { align: 'right' });
-      y += 7;
+      const nameWidth = doc.getTextWidth(zone.name);
+      const pillX = margin + nameWidth + 6;
+      const pillColors = {
+        'Excellent': [220, 252, 231, 21, 128, 61],
+        'Good': [219, 234, 254, 29, 78, 216],
+        'Fair': [254, 243, 199, 180, 83, 9],
+        'Needs work': [255, 237, 213, 194, 65, 12],
+        'Below standard': [254, 226, 226, 185, 28, 28],
+      };
+      const [bgR, bgG, bgB, txR, txG, txB] = pillColors[zone.rating] || [241, 245, 249, 100, 116, 139];
+      doc.setFontSize(8.5); doc.setFont(undefined, 'bold');
+      const pillTextWidth = doc.getTextWidth(zone.rating);
+      const pillW = pillTextWidth + 8;
+      doc.setFillColor(bgR, bgG, bgB);
+      doc.roundedRect(pillX, y - 4.5, pillW, 6.5, 2, 2, 'F');
+      doc.setTextColor(txR, txG, txB);
+      doc.text(zone.rating, pillX + 4, y);
+      doc.setFontSize(15); doc.setTextColor(20, 20, 20);
     }
 
-    [['Plants', zone.plants || '-'], ['Containers', zone.containers || '-'],
-     ['Signs of pests', zone.pests || '-'],
-     ['Replacements required', saReplacementTotal(zone) > 0 ? `${saReplacementTotal(zone)} (${saReplacementSummary(zone)})` : '-'],
-     ['H&S hazards (not in RAMs)', zone.hazards || '-']].forEach(([label, val]) => {
-      doc.setFont(undefined, 'normal'); doc.setTextColor(60, 60, 60);
-      doc.text(label, margin, y);
-      doc.setFont(undefined, 'bold'); doc.setTextColor(40, 40, 40);
-      doc.text(String(val), pageW - margin, y, { align: 'right' });
-      y += 7;
-    });
+    y += 10;
+    doc.setFontSize(10);
     if (zone.notes || zone.summary) {
-      y += 4;
-      doc.setDrawColor(220, 220, 220); doc.line(margin, y, pageW - margin, y); y += 6;
       if (zone.summary) {
         doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
         doc.text('Summary', margin, y); y += 6;
@@ -2916,7 +2918,7 @@ function SAPhotoRow({ photos, onAdd, onAnnotate, onRemove, onCaptionChange, onFi
               </div>
             )}
           </div>
-          <div className="flex-1 flex flex-col gap-1.5">
+          <div className="flex-1 min-w-0 flex flex-col gap-1.5">
             {showReplacementFields && (
               <>
                 <SpeciesAutocomplete
@@ -2929,7 +2931,7 @@ function SAPhotoRow({ photos, onAdd, onAnnotate, onRemove, onCaptionChange, onFi
                     value={photo.potSize || '9cm'}
                     onChange={(e) => onFieldChange(photo.id, { potSize: e.target.value, customSize: '' })}
                     disabled={readOnly}
-                    className="flex-1 text-sm border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    className="flex-1 min-w-0 text-sm border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
                   >
                     {SA_POT_SIZES.map((s) => <option key={s}>{s}</option>)}
                   </select>
@@ -2941,7 +2943,7 @@ function SAPhotoRow({ photos, onAdd, onAnnotate, onRemove, onCaptionChange, onFi
                     onBlur={(e) => onFieldChange(photo.id, { quantity: e.target.value })}
                     readOnly={readOnly}
                     placeholder="Qty"
-                    className="w-16 text-sm text-center border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    className="w-16 flex-shrink-0 text-sm text-center border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
                   />
                 </div>
                 {photo.potSize === 'Other' && (
@@ -3298,44 +3300,62 @@ function SAFlow({ record, onChange, onClose }) {
               {expandedSection === 'replacements' && (
                 <div className="border-t border-slate-100 px-4 py-3 space-y-2">
                   {(currentZone.replacementRows || []).map((row, rowIdx) => (
-                    <div key={row.id} className="flex items-end gap-2">
-                      <div className="w-16 flex-shrink-0">
-                        <p className="text-xs text-slate-400 mb-1">Qty</p>
-                        <input
-                          key={`qty-${row.id}`}
-                          type="number" min="0" placeholder="0"
-                          defaultValue={row.qty || ''}
-                          onFocus={(e) => e.target.select()}
-                          onBlur={(e) => {
+                    <div key={row.id} className="border border-slate-200 rounded-lg p-2.5">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-slate-400">Row {rowIdx + 1}</span>
+                        {!readOnly && (
+                          <button
+                            onClick={() => {
+                              const rows = (currentZone.replacementRows || []).filter((_, i) => i !== rowIdx);
+                              updateZoneField(currentZoneIdx, 'replacementRows', rows);
+                            }}
+                            className="w-6 h-6 flex items-center justify-center rounded-md border border-slate-200 text-slate-400 hover:text-red-500 flex-shrink-0"
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <SpeciesAutocomplete
+                          value={row.species || ''}
+                          onChange={(val) => {
                             const rows = [...(currentZone.replacementRows || [])];
-                            rows[rowIdx] = { ...rows[rowIdx], qty: e.target.value };
+                            rows[rowIdx] = { ...rows[rowIdx], species: val };
                             updateZoneField(currentZoneIdx, 'replacementRows', rows);
                           }}
                           readOnly={readOnly}
-                          className="w-full text-sm border border-slate-200 rounded-lg px-2 py-2 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
                         />
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-xs text-slate-400 mb-1">Pot size</p>
-                        <select
-                          value={row.potSize}
-                          onChange={(e) => {
-                            const rows = [...(currentZone.replacementRows || [])];
-                            rows[rowIdx] = { ...rows[rowIdx], potSize: e.target.value, customSize: '' };
-                            updateZoneField(currentZoneIdx, 'replacementRows', rows);
-                          }}
-                          disabled={readOnly}
-                          className="w-full text-sm border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                        >
-                          {SA_POT_SIZES.map((s) => <option key={s}>{s}</option>)}
-                        </select>
-                      </div>
-                      {row.potSize === 'Other' && (
-                        <div className="flex-1">
-                          <p className="text-xs text-slate-400 mb-1">Specify</p>
+                        <div className="flex gap-1.5">
+                          <select
+                            value={row.potSize}
+                            onChange={(e) => {
+                              const rows = [...(currentZone.replacementRows || [])];
+                              rows[rowIdx] = { ...rows[rowIdx], potSize: e.target.value, customSize: '' };
+                              updateZoneField(currentZoneIdx, 'replacementRows', rows);
+                            }}
+                            disabled={readOnly}
+                            className="flex-1 min-w-0 text-sm border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          >
+                            {SA_POT_SIZES.map((s) => <option key={s}>{s}</option>)}
+                          </select>
+                          <input
+                            key={`qty-${row.id}`}
+                            type="number" min="0" placeholder="Qty"
+                            defaultValue={row.qty || ''}
+                            onFocus={(e) => e.target.select()}
+                            onBlur={(e) => {
+                              const rows = [...(currentZone.replacementRows || [])];
+                              rows[rowIdx] = { ...rows[rowIdx], qty: e.target.value };
+                              updateZoneField(currentZoneIdx, 'replacementRows', rows);
+                            }}
+                            readOnly={readOnly}
+                            className="w-16 flex-shrink-0 text-sm border border-slate-200 rounded-lg px-2 py-2 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          />
+                        </div>
+                        {row.potSize === 'Other' && (
                           <input
                             key={`custom-${row.id}`}
-                            type="text" placeholder="e.g. 40cm"
+                            type="text" placeholder="Specify pot size"
                             defaultValue={row.customSize || ''}
                             onBlur={(e) => {
                               const rows = [...(currentZone.replacementRows || [])];
@@ -3343,21 +3363,22 @@ function SAFlow({ record, onChange, onClose }) {
                               updateZoneField(currentZoneIdx, 'replacementRows', rows);
                             }}
                             readOnly={readOnly}
-                            className="w-full text-sm border border-slate-200 rounded-lg px-2 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
                           />
-                        </div>
-                      )}
-                      {!readOnly && (
-                        <button
-                          onClick={() => {
-                            const rows = (currentZone.replacementRows || []).filter((_, i) => i !== rowIdx);
+                        )}
+                        <input
+                          key={`notes-${row.id}`}
+                          type="text" placeholder="Notes (optional)"
+                          defaultValue={row.notes || ''}
+                          onBlur={(e) => {
+                            const rows = [...(currentZone.replacementRows || [])];
+                            rows[rowIdx] = { ...rows[rowIdx], notes: e.target.value };
                             updateZoneField(currentZoneIdx, 'replacementRows', rows);
                           }}
-                          className="w-8 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:text-red-500 flex-shrink-0"
-                        >
-                          <X size={14} />
-                        </button>
-                      )}
+                          readOnly={readOnly}
+                          className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </div>
                     </div>
                   ))}
                   {!readOnly && (
@@ -3368,7 +3389,7 @@ function SAFlow({ record, onChange, onClose }) {
                       }}
                       className="w-full py-2 border border-dashed border-slate-300 rounded-lg text-xs text-slate-500 flex items-center justify-center gap-1.5 hover:bg-slate-50"
                     >
-                      <Plus size={13} /> Add pot size
+                      <Plus size={13} /> Add
                     </button>
                   )}
                   {saReplacementTotal(currentZone) > 0 && (
