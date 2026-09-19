@@ -585,9 +585,7 @@ function generateSAOverallSummary(record) {
   }
   const totalReplacements = record.zones.reduce((s, z) => s + saReplacementTotal(z), 0);
   if (totalReplacements > 0) {
-    const breakdown = record.zones.filter((z) => saReplacementTotal(z) > 0)
-      .map((z) => `${z.name} (${saReplacementSummary(z)})`).join(', ');
-    parts.push(`A total of ${totalReplacements} plant${totalReplacements === 1 ? '' : 's'} ${totalReplacements === 1 ? 'requires' : 'require'} replacement: ${breakdown}.`);
+    parts.push(`A total of ${totalReplacements} plant${totalReplacements === 1 ? '' : 's'} ${totalReplacements === 1 ? 'requires' : 'require'} replacement across the site.`);
   }
   const pestZones = record.zones.filter((z) => z.pests === 'Yes').map((z) => z.name);
   if (pestZones.length > 0) {
@@ -641,23 +639,30 @@ function saReplacementSummary(zone) {
 
 // Every replacement entry across the whole site, labelled by zone — used
 // for the bulleted list on the report's overall site summary / PDF cover.
+// Every replacement entry across the whole site, grouped and summed by
+// species + pot size (e.g. all "Kentia (1.5m)" entries from every zone
+// collapse into one line) — no zone names, since this is a site-wide total.
 function saAllReplacementBullets(zones) {
-  const bullets = [];
+  const groups = new Map();
   zones.forEach((z) => {
     saReplacementEntries(z).forEach((e) => {
-      let text;
-      if (e.species && e.potSize) text = `${z.name}: ${e.qty} × ${e.species} (${e.potSize})`;
-      else if (e.species) text = `${z.name}: ${e.qty} × ${e.species}`;
-      else if (e.potSize) text = `${z.name}: ${e.qty} × ${e.potSize}`;
-      else text = `${z.name}: ${e.qty}`;
-      bullets.push(text);
+      const key = `${e.species}|||${e.potSize}`;
+      const existing = groups.get(key);
+      if (existing) existing.qty += e.qty;
+      else groups.set(key, { qty: e.qty, species: e.species, potSize: e.potSize });
     });
   });
-  return bullets;
+  return [...groups.values()].map((e) => {
+    if (e.species && e.potSize) return `${e.qty} × ${e.species} (${e.potSize})`;
+    if (e.species) return `${e.qty} × ${e.species}`;
+    if (e.potSize) return `${e.qty} × ${e.potSize}`;
+    return `${e.qty}`;
+  });
 }
 
-// Same as above but scoped to one zone, without the zone-name prefix —
-// used on that zone's own PDF page.
+// Same underlying entries but scoped to one zone, without the zone-name
+// prefix and left ungrouped (one line per row/photo) — used on that
+// zone's own PDF page.
 function saZoneReplacementBullets(zone) {
   return saReplacementEntries(zone).map((e) => {
     if (e.species && e.potSize) return `${e.qty} × ${e.species} (${e.potSize})`;
@@ -2705,6 +2710,7 @@ async function exportSAPdf(record, options = {}) {
     if (y > pageH - margin) { doc.addPage(); addHeaderBar(siteInfo.site || ''); }
     doc.text('Plant replacements', margin, y); y += 7;
     doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
+    doc.text('The following replacements are required:', margin, y); y += 6;
     drawBulletedList(replacementBullets, siteInfo.site || '');
 
     const totalReplacements = zones.reduce((s, z) => s + saReplacementTotal(z), 0);
@@ -2749,20 +2755,21 @@ async function exportSAPdf(record, options = {}) {
     doc.setFontSize(10);
     const zoneReplacementBullets = saZoneReplacementBullets(zone);
     if (zone.notes || zone.summary || zoneReplacementBullets.length > 0) {
-      if (zone.summary) {
+      if (zone.summary || zoneReplacementBullets.length > 0) {
         doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
         doc.text('Summary', margin, y); y += 6;
         doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
-        drawWrappedText(zone.summary, siteInfo.site || '');
-        y += 4;
-      }
-      if (zoneReplacementBullets.length > 0) {
-        if (y > pageH - margin) { doc.addPage(); addHeaderBar(siteInfo.site || ''); }
-        doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
-        doc.text('Replacements', margin, y); y += 6;
-        doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
-        drawBulletedList(zoneReplacementBullets, siteInfo.site || '');
-        y += 4;
+        if (zone.summary) {
+          drawWrappedText(zone.summary, siteInfo.site || '');
+          y += 4;
+        }
+        if (zoneReplacementBullets.length > 0) {
+          if (y > pageH - margin) { doc.addPage(); addHeaderBar(siteInfo.site || ''); }
+          doc.setFont(undefined, 'normal'); doc.setFontSize(10); doc.setTextColor(60, 60, 60);
+          doc.text('The following replacements are required:', margin, y); y += 6;
+          drawBulletedList(zoneReplacementBullets, siteInfo.site || '');
+          y += 4;
+        }
       }
       if (zone.notes) {
         doc.setFont(undefined, 'bold'); doc.setFontSize(11); doc.setTextColor(20, 20, 20);
@@ -2840,8 +2847,7 @@ function generateSASummary(zone) {
 
   const total = saReplacementTotal(zone);
   if (total > 0) {
-    const breakdown = saReplacementSummary(zone);
-    parts.push(`${total} plant${total === 1 ? '' : 's'} ${total === 1 ? 'has' : 'have'} been identified as requiring replacement${breakdown ? `: ${breakdown}` : ''}.`);
+    parts.push(`${total} plant${total === 1 ? '' : 's'} ${total === 1 ? 'has' : 'have'} been identified as requiring replacement.`);
   }
 
   if (zone.hazards === 'Yes') {
